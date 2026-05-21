@@ -83,6 +83,6 @@ InterviewAI is optimized for Vercel.
 
 ## 🧑‍💻 Author
 
-Built by [Your Name]
-- LinkedIn: [Your Profile](https://linkedin.com/in/yourusername)
-- GitHub: [Your GitHub](https://github.com/yourusername)
+Built by Poosaala Soumith
+- LinkedIn: https://www.linkedin.com/in/poosaalasoumith/
+- GitHub: https://github.com/poosaalasoumith
