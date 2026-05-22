@@ -13,7 +13,8 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { login, signInWithGoogle } from "@/app/actions/auth";
+import { login } from "@/app/actions/auth";
+import { createClient } from "@/utils/supabase/client";
 
 const loginSchema = z.object({
   email: z.string().email("Please enter a valid email address"),
@@ -64,9 +65,19 @@ export default function LoginPage() {
   const handleGoogleSignIn = async () => {
     setIsGoogleLoading(true);
     try {
-      await signInWithGoogle();
-    } catch (error) {
-      toast.error("Failed to sign in with Google");
+      const supabase = createClient();
+      const { error } = await supabase.auth.signInWithOAuth({
+        provider: "google",
+        options: {
+          redirectTo: `${window.location.origin}/auth/callback`,
+        },
+      });
+      if (error) {
+        throw error;
+      }
+    } catch (error: any) {
+      console.error("[Google OAuth Client Error]", error);
+      toast.error(error.message || "Failed to sign in with Google");
       setIsGoogleLoading(false);
     }
   };

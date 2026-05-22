@@ -11,6 +11,33 @@ export async function GET(request: Request) {
     const supabase = await createClient()
     const { error } = await supabase.auth.exchangeCodeForSession(code)
     if (!error) {
+      try {
+        const { data: { user } } = await supabase.auth.getUser()
+        if (user) {
+          // Retrieve the user profile from the database public.users table (source of truth)
+          const { data: profile } = await supabase
+            .from('users')
+            .select('role, name')
+            .eq('id', user.id)
+            .single()
+
+          const dbRole = profile?.role || 'candidate'
+
+          // Synchronize the user_metadata role with the public users table role if missing/mismatched
+          if (user.user_metadata?.role !== dbRole) {
+            console.log(`[Auth Callback] Syncing auth metadata role to matching database role: "${user.user_metadata?.role || 'none'}" -> "${dbRole}"`);
+            await supabase.auth.updateUser({
+              data: {
+                role: dbRole,
+                full_name: user.user_metadata?.full_name || profile?.name || user.email?.split('@')[0],
+              }
+            });
+          }
+        }
+      } catch (syncError) {
+        console.error("[Auth Callback] Failed to synchronize role metadata:", syncError);
+      }
+
       const forwardedHost = request.headers.get('x-forwarded-host') // original origin before load balancer
       const isLocalEnv = process.env.NODE_ENV === 'development'
       if (isLocalEnv) {

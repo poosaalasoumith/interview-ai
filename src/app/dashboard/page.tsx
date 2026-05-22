@@ -9,7 +9,14 @@ export default async function DashboardIndexPage() {
     redirect("/login");
   }
 
-  const role = user.user_metadata?.role || "candidate";
+  // Retrieve role from the public users table (source of truth)
+  const { data: profile } = await supabase
+    .from("users")
+    .select("role")
+    .eq("id", user.id)
+    .single();
+
+  const role = profile?.role || user.user_metadata?.role || "candidate";
 
   // Redirect to the appropriate dashboard based on role
   if (role === "interviewer") {
