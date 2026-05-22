@@ -9,6 +9,7 @@ interface CodeEditorProps {
   onChange: (value: string | undefined) => void;
   fontSize?: number;
   minimap?: boolean;
+  readOnly?: boolean;
 }
 
 export function CodeEditor({ 
@@ -17,6 +18,7 @@ export function CodeEditor({
   onChange,
   fontSize = 14,
   minimap = false,
+  readOnly = false,
 }: CodeEditorProps) {
   const { theme } = useTheme();
   const [mounted, setMounted] = useState(false);
@@ -34,7 +36,7 @@ export function CodeEditor({
         language={language === "c" || language === "cpp" ? "cpp" : language}
         value={value}
         theme={theme === "dark" ? "vs-dark" : "light"}
-        onChange={onChange}
+        onChange={readOnly ? undefined : onChange}
         options={{
           fontSize,
           minimap: { enabled: minimap },
@@ -45,6 +47,8 @@ export function CodeEditor({
           cursorBlinking: "smooth",
           cursorSmoothCaretAnimation: "on",
           formatOnPaste: true,
+          readOnly: readOnly,
+          domReadOnly: readOnly,
         }}
         loading={
           <div className="flex h-full items-center justify-center bg-zinc-950">

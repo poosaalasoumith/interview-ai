@@ -17,7 +17,7 @@ ON CONFLICT (id) DO NOTHING;
 
 -- 2. Enable Row-Level Security (RLS) on storage.objects
 -- Note: Supabase enables RLS on storage.objects by default, but this ensures it is active
-ALTER TABLE storage.objects ENABLE ROW LEVEL SECURITY;
+-- ALTER TABLE storage.objects ENABLE ROW LEVEL SECURITY;
 
 -- 3. Storage RLS Policies for the 'avatars' bucket
 

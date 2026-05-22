@@ -1,4 +1,4 @@
-import { getCandidates, getInterviews } from "@/app/actions/interviews";
+import { getCandidates, getInterviews, getScheduledInterviews } from "@/app/actions/interviews";
 import { InterviewerScheduleClient } from "@/components/dashboard/interviewer-schedule-client";
 import { createClient } from "@/utils/supabase/server";
 import { redirect } from "next/navigation";
@@ -22,9 +22,10 @@ export default async function InterviewerInterviewsPage() {
     redirect("/dashboard");
   }
 
-  const [interviews, candidates] = await Promise.all([
+  const [interviews, candidates, scheduledInterviews] = await Promise.all([
     getInterviews(),
-    getCandidates()
+    getCandidates(),
+    getScheduledInterviews()
   ]);
 
   return (
@@ -32,6 +33,7 @@ export default async function InterviewerInterviewsPage() {
       <InterviewerScheduleClient 
         initialInterviews={interviews} 
         candidates={candidates} 
+        initialScheduled={scheduledInterviews}
       />
     </div>
   );

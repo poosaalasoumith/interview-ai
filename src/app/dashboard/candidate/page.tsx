@@ -2,6 +2,7 @@ import { createClient } from "@/utils/supabase/server";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Calendar, Code, Star, Clock, Play, Sparkles } from "lucide-react";
 import { CandidateChart } from "@/components/dashboard/candidate-chart";
+import { CandidateScheduleClient } from "@/components/dashboard/candidate-schedule-client";
 import { buttonVariants } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import Link from "next/link";
@@ -133,43 +134,7 @@ export default async function CandidateDashboard() {
             <CardDescription>Your scheduled technical interviews.</CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
-            {upcomingInterviews.length === 0 ? (
-              <div className="flex flex-col items-center justify-center py-10 text-center space-y-2">
-                <Calendar className="h-8 w-8 text-zinc-600" />
-                <p className="text-sm text-zinc-500">No sessions scheduled.</p>
-              </div>
-            ) : (
-              upcomingInterviews.map((interview) => {
-                const date = new Date(interview.scheduled_at);
-                const formattedDate = date.toLocaleDateString(undefined, {
-                  month: "short",
-                  day: "numeric",
-                  hour: "2-digit",
-                  minute: "2-digit"
-                });
-                return (
-                  <div key={interview.id} className="flex items-center p-4 rounded-lg border border-zinc-850 bg-zinc-900/30 group">
-                    <div className="bg-primary/10 p-3 rounded-full mr-4 group-hover:bg-primary/20 transition-colors shrink-0">
-                      <Calendar className="h-5 w-5 text-primary" />
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <h4 className="text-sm font-semibold truncate text-white">
-                        {interview.title}
-                      </h4>
-                      <p className="text-xs text-muted-foreground mt-0.5 truncate">
-                        {formattedDate} • with {interview.interviewer?.name || interview.interviewer?.email || "Guest Interviewer"}
-                      </p>
-                    </div>
-                    <Link 
-                      href={`/interview/${interview.id}`}
-                      className={cn(buttonVariants({ variant: "outline", size: "sm" }), "hidden group-hover:flex ml-4 cursor-pointer text-xs border-zinc-800")}
-                    >
-                      <Play className="h-3 w-3 mr-1" /> Join Lobby
-                    </Link>
-                  </div>
-                );
-              })
-            )}
+            <CandidateScheduleClient upcomingInterviews={upcomingInterviews} />
           </CardContent>
         </Card>
         <Card className="col-span-3 bg-zinc-900/40 backdrop-blur-sm border-zinc-800/80">

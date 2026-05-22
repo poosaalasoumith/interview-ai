@@ -1,4 +1,5 @@
 "use client";
+/* eslint-disable react-hooks/set-state-in-effect */
 
 import { useState, useEffect, useCallback, useRef } from "react";
 import { CodeEditor } from "./code-editor";
@@ -6,7 +7,7 @@ import { SUPPORTED_LANGUAGES, LANGUAGE_TEMPLATES } from "@/constants/languages";
 import { executeCode, ExecutionResult } from "@/services/piston";
 import { logSubmission } from "@/services/submissions";
 import { ResizablePanelGroup, ResizablePanel, ResizableHandle } from "@/components/ui/resizable";
-import { Play, Maximize2, Minimize2, Copy, Check, Settings2, Loader2, RefreshCw, Sparkles } from "lucide-react";
+import { Play, Maximize2, Minimize2, Copy, Check, Settings2, Loader2, RefreshCw, Sparkles, Terminal } from "lucide-react";
 import { toast } from "sonner";
 import { useDataChannel, useLocalParticipant } from "@livekit/components-react";
 import { AIAssistantPanel } from "./ai-assistant-panel";
@@ -20,9 +21,18 @@ const AIReviewModal = dynamic(
 interface CodingEnvironmentProps {
   interviewId: string;
   problemStatement?: any;
+  isInterviewer?: boolean;
+  isLocked?: boolean;
+  interviewMode?: string;
 }
 
-export function CodingEnvironment({ interviewId, problemStatement }: CodingEnvironmentProps) {
+export function CodingEnvironment({ 
+  interviewId, 
+  problemStatement,
+  isInterviewer = false,
+  isLocked = false,
+  interviewMode = "assessment"
+}: CodingEnvironmentProps) {
   const [language, setLanguage] = useState("javascript");
   const [code, setCode] = useState(LANGUAGE_TEMPLATES["javascript"]);
   const [isFullscreen, setIsFullscreen] = useState(false);
@@ -33,9 +43,14 @@ export function CodingEnvironment({ interviewId, problemStatement }: CodingEnvir
 
   const [fontSize, setFontSize] = useState(14);
   const [minimap, setMinimap] = useState(false);
+  const [isConsoleCollapsed, setIsConsoleCollapsed] = useState(false);
+  const [defaultLayout, setDefaultLayout] = useState<number[]>([70, 30]);
+  const consolePanelRef = useRef<any>(null);
 
   const [isAssistantOpen, setIsAssistantOpen] = useState(false);
   const [isReviewOpen, setIsReviewOpen] = useState(false);
+
+  const isAssessmentMode = interviewMode === "assessment";
 
   // LiveKit Data Channel for Code Sync
   const { send } = useDataChannel("code-sync", (msg) => {
@@ -55,8 +70,10 @@ export function CodingEnvironment({ interviewId, problemStatement }: CodingEnvir
     }
   });
 
-  // Load draft from localStorage on mount
+  // Load preferences and draft from localStorage on mount
   useEffect(() => {
+    if (typeof window === "undefined") return;
+
     const draft = localStorage.getItem(`draft_${interviewId}`);
     if (draft) {
       try {
@@ -65,11 +82,48 @@ export function CodingEnvironment({ interviewId, problemStatement }: CodingEnvir
         setLanguage(parsed.language);
       } catch (e) {}
     }
+
+    const savedFontSize = localStorage.getItem(`fontSize_${interviewId}`);
+    if (savedFontSize) {
+      setFontSize(parseInt(savedFontSize, 10));
+    }
+
+    const savedMinimap = localStorage.getItem(`minimap_${interviewId}`);
+    if (savedMinimap) {
+      setMinimap(savedMinimap === "true");
+    }
+
+    const savedLayout = localStorage.getItem(`layout_${interviewId}`);
+    if (savedLayout) {
+      try {
+        setDefaultLayout(JSON.parse(savedLayout));
+      } catch (e) {}
+    }
+
+    const savedConsoleCollapsed = localStorage.getItem(`consoleCollapsed_${interviewId}`);
+    if (savedConsoleCollapsed) {
+      setIsConsoleCollapsed(savedConsoleCollapsed === "true");
+    }
   }, [interviewId]);
+
+  // Programmatically apply console collapse state
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      if (consolePanelRef.current) {
+        if (isConsoleCollapsed) {
+          consolePanelRef.current.collapse();
+        } else {
+          consolePanelRef.current.expand();
+        }
+      }
+    }, 100);
+    return () => clearTimeout(timer);
+  }, [isConsoleCollapsed]);
 
   // Handle Code Change
   const handleCodeChange = useCallback(
     (newCode: string | undefined) => {
+      if (isInterviewer || isLocked) return;
       const val = newCode || "";
       setCode(val);
       
@@ -80,10 +134,11 @@ export function CodingEnvironment({ interviewId, problemStatement }: CodingEnvir
       const payload = JSON.stringify({ type: "CODE_UPDATE", code: val, language });
       send(new TextEncoder().encode(payload), { reliable: true });
     },
-    [interviewId, language, send]
+    [interviewId, language, send, isInterviewer, isLocked]
   );
 
   const handleLanguageChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
+    if (isInterviewer || isLocked) return;
     const newLang = e.target.value;
     setLanguage(newLang);
     const newCode = LANGUAGE_TEMPLATES[newLang];
@@ -95,7 +150,7 @@ export function CodingEnvironment({ interviewId, problemStatement }: CodingEnvir
   };
 
   const handleRunCode = async () => {
-    if (!code.trim()) return;
+    if (!code.trim() || isInterviewer || isLocked) return;
     setIsExecuting(true);
     setOutput(null);
 
@@ -139,15 +194,33 @@ export function CodingEnvironment({ interviewId, problemStatement }: CodingEnvir
     setIsFullscreen(!isFullscreen);
   };
 
+  const [isClient, setIsClient] = useState(false);
+
+  useEffect(() => {
+    setIsClient(true);
+  }, []);
+
+  if (!isClient) {
+    return (
+      <div className="flex-1 flex flex-col bg-zinc-950 items-center justify-center space-y-4">
+        <div className="relative">
+          <div className="w-12 h-12 rounded-full border-2 border-zinc-800 border-t-primary animate-spin" />
+        </div>
+        <p className="text-xs text-zinc-500 font-medium">Loading editor environment...</p>
+      </div>
+    );
+  }
+
   return (
-    <div className={`flex flex-col bg-zinc-950 border-l border-zinc-800 ${isFullscreen ? "fixed inset-0 z-50" : "h-full w-full"}`}>
+    <div className={`flex flex-col bg-zinc-950 border-l border-zinc-800 ${isFullscreen ? "fixed inset-0 z-50 animate-fade-in" : "h-full w-full"}`}>
       {/* Editor Header */}
-      <header className="h-12 flex items-center justify-between px-4 border-b border-zinc-800 bg-zinc-900/50 backdrop-blur-md shrink-0">
+      <header className="h-12 flex items-center justify-between px-4 border-b border-zinc-800 bg-zinc-900/50 backdrop-blur-md shrink-0 select-none">
         <div className="flex items-center gap-3">
           <select 
             value={language}
             onChange={handleLanguageChange}
-            className="bg-zinc-800 text-sm text-zinc-200 border border-zinc-700 rounded-md px-2 py-1 outline-none focus:border-primary transition"
+            disabled={isInterviewer || isLocked}
+            className="bg-zinc-850 hover:bg-zinc-800 text-xs font-medium text-zinc-200 border border-zinc-700/60 rounded-lg px-2.5 py-1.5 outline-none focus:border-primary focus:ring-1 focus:ring-primary transition cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
           >
             {SUPPORTED_LANGUAGES.map((lang) => (
               <option key={lang.id} value={lang.id}>{lang.name}</option>
@@ -155,44 +228,123 @@ export function CodingEnvironment({ interviewId, problemStatement }: CodingEnvir
           </select>
           <button 
             onClick={() => {
-              setCode(LANGUAGE_TEMPLATES[language]);
-              handleCodeChange(LANGUAGE_TEMPLATES[language]);
+              if (confirm("Reset editor to original template? This will erase your current code drafts.")) {
+                setCode(LANGUAGE_TEMPLATES[language]);
+                handleCodeChange(LANGUAGE_TEMPLATES[language]);
+              }
             }}
-            className="p-1.5 text-zinc-400 hover:text-white hover:bg-zinc-800 rounded-md transition tooltip-trigger"
+            disabled={isInterviewer || isLocked}
+            className="p-1.5 text-zinc-400 hover:text-white hover:bg-zinc-800/80 rounded-lg border border-transparent hover:border-zinc-700/30 transition cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
             title="Reset to Template"
           >
-            <RefreshCw className="w-4 h-4" />
+            <RefreshCw className="w-3.5 h-3.5" />
+          </button>
+
+          <div className="h-4 w-px bg-zinc-800 mx-1" />
+
+          {/* Font Sizer Widget */}
+          <div className="flex items-center bg-zinc-900 border border-zinc-800/80 rounded-lg px-1.5 py-0.5">
+            <button
+              onClick={() => {
+                const newSize = Math.max(10, fontSize - 1);
+                setFontSize(newSize);
+                localStorage.setItem(`fontSize_${interviewId}`, String(newSize));
+              }}
+              className="p-1 text-zinc-400 hover:text-white hover:bg-zinc-800 rounded transition text-[10px] font-bold cursor-pointer h-5 w-5 flex items-center justify-center"
+              title="Decrease Font Size"
+            >
+              A-
+            </button>
+            <span className="text-[10px] font-mono text-zinc-400 px-2 font-semibold min-w-[28px] text-center">{fontSize}px</span>
+            <button
+              onClick={() => {
+                const newSize = Math.min(24, fontSize + 1);
+                setFontSize(newSize);
+                localStorage.setItem(`fontSize_${interviewId}`, String(newSize));
+              }}
+              className="p-1 text-zinc-400 hover:text-white hover:bg-zinc-800 rounded transition text-[10px] font-bold cursor-pointer h-5 w-5 flex items-center justify-center"
+              title="Increase Font Size"
+            >
+              A+
+            </button>
+          </div>
+
+          {/* Minimap toggle widget */}
+          <button
+            onClick={() => {
+              const nextMinimap = !minimap;
+              setMinimap(nextMinimap);
+              localStorage.setItem(`minimap_${interviewId}`, String(nextMinimap));
+            }}
+            className={`px-2.5 py-1.5 rounded-lg text-xs font-semibold border transition cursor-pointer ${
+              minimap 
+                ? "bg-zinc-800 text-zinc-100 border-zinc-700/80" 
+                : "text-zinc-500 border-transparent hover:bg-zinc-850 hover:text-zinc-300"
+            }`}
+            title="Toggle Editor Minimap"
+          >
+            Minimap
           </button>
         </div>
 
         <div className="flex items-center gap-2">
+          {/* Status badge */}
+          {(isInterviewer || isLocked) && (
+            <span className="px-2.5 py-1 bg-zinc-800/80 border border-zinc-700 text-[10px] font-bold tracking-wider text-indigo-400 uppercase rounded-md">
+              {isLocked ? "Submission Frozen" : "Viewing Mode (ReadOnly)"}
+            </span>
+          )}
+
+          {/* Console Toggle Button */}
           <button 
-            onClick={() => setIsAssistantOpen(!isAssistantOpen)}
-            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium transition border ${
-              isAssistantOpen 
-                ? "bg-primary/20 text-primary border-primary/30" 
-                : "bg-zinc-800/50 text-zinc-300 hover:text-white border-zinc-700/50 hover:bg-zinc-800"
+            onClick={() => {
+              const nextCollapsed = !isConsoleCollapsed;
+              setIsConsoleCollapsed(nextCollapsed);
+              localStorage.setItem(`consoleCollapsed_${interviewId}`, String(nextCollapsed));
+            }}
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold border transition cursor-pointer ${
+              !isConsoleCollapsed 
+                ? "bg-zinc-800 text-zinc-200 border-zinc-700" 
+                : "text-zinc-400 hover:text-zinc-250 border-transparent hover:bg-zinc-850"
             }`}
+            title={isConsoleCollapsed ? "Show Terminal Console" : "Hide Terminal Console"}
           >
-            <Sparkles className={`w-4 h-4 ${isAssistantOpen ? "fill-primary/20" : ""}`} />
-            Assistant
+            <Terminal className="w-3.5 h-3.5" />
+            Console
           </button>
 
-          <button 
-            onClick={() => setIsReviewOpen(true)}
-            disabled={!code.trim() || isExecuting}
-            className="flex items-center gap-1.5 bg-indigo-500/10 hover:bg-indigo-500/20 text-indigo-400 border border-indigo-500/20 px-3 py-1.5 rounded-md text-sm font-medium transition disabled:opacity-50 disabled:cursor-not-allowed"
-          >
-            <Settings2 className="w-4 h-4" />
-            AI Review
-          </button>
+          {/* AI Tools restricted in assessment mode for candidates */}
+          {(!isAssessmentMode || isInterviewer) && (
+            <>
+              <button 
+                onClick={() => setIsAssistantOpen(!isAssistantOpen)}
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition border cursor-pointer ${
+                  isAssistantOpen 
+                    ? "bg-primary/20 text-primary border-primary/30" 
+                    : "bg-zinc-850 text-zinc-300 hover:text-white border-zinc-700/50 hover:bg-zinc-800"
+                }`}
+              >
+                <Sparkles className={`w-3.5 h-3.5 ${isAssistantOpen ? "fill-primary/20" : ""}`} />
+                Assistant
+              </button>
+
+              <button 
+                onClick={() => setIsReviewOpen(true)}
+                disabled={!code.trim() || isExecuting}
+                className="flex items-center gap-1.5 bg-indigo-500/10 hover:bg-indigo-500/20 text-indigo-400 border border-indigo-500/20 px-3 py-1.5 rounded-lg text-xs font-semibold transition disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
+              >
+                <Settings2 className="w-3.5 h-3.5" />
+                AI Review
+              </button>
+            </>
+          )}
 
           <button 
             onClick={handleRunCode}
-            disabled={isExecuting}
-            className="flex items-center gap-1.5 bg-primary/10 hover:bg-primary/20 text-primary border border-primary/20 px-3 py-1.5 rounded-md text-sm font-medium transition disabled:opacity-50 disabled:cursor-not-allowed"
+            disabled={isExecuting || isInterviewer || isLocked}
+            className="flex items-center gap-1.5 bg-primary/10 hover:bg-primary/20 text-primary border border-primary/20 px-3 py-1.5 rounded-lg text-xs font-semibold transition disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer shadow-lg shadow-primary/5"
           >
-            {isExecuting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Play className="w-4 h-4 fill-current" />}
+            {isExecuting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Play className="w-3.5 h-3.5 fill-current" />}
             Run Code
           </button>
           
@@ -200,9 +352,10 @@ export function CodingEnvironment({ interviewId, problemStatement }: CodingEnvir
           
           <button 
             onClick={toggleFullscreen}
-            className="p-1.5 text-zinc-400 hover:text-white hover:bg-zinc-800 rounded-md transition"
+            className="p-1.5 text-zinc-400 hover:text-white hover:bg-zinc-800 rounded-lg border border-transparent hover:border-zinc-700/30 transition cursor-pointer"
+            title={isFullscreen ? "Exit Fullscreen" : "Fullscreen Editor"}
           >
-            {isFullscreen ? <Minimize2 className="w-4 h-4" /> : <Maximize2 className="w-4 h-4" />}
+            {isFullscreen ? <Minimize2 className="w-3.5 h-3.5" /> : <Maximize2 className="w-3.5 h-3.5" />}
           </button>
         </div>
       </header>
@@ -210,29 +363,68 @@ export function CodingEnvironment({ interviewId, problemStatement }: CodingEnvir
       {/* Editor & Console Split */}
       <div className="flex-1 min-h-0 relative flex">
         <div className="flex-1 min-w-0 relative">
-          <ResizablePanelGroup orientation="vertical">
-            <ResizablePanel defaultSize={70} minSize={30}>
+          <ResizablePanelGroup 
+            orientation="vertical"
+            onLayoutChange={(layout: any) => {
+              localStorage.setItem(`layout_${interviewId}`, JSON.stringify(layout));
+            }}
+          >
+            <ResizablePanel defaultSize={defaultLayout[0]} minSize={30}>
               <CodeEditor 
                 language={language}
                 value={code}
                 onChange={handleCodeChange}
                 fontSize={fontSize}
                 minimap={minimap}
+                readOnly={isInterviewer || isLocked}
               />
             </ResizablePanel>
             
-            <ResizableHandle className="h-1 bg-zinc-800 hover:bg-primary/50 transition-colors" />
+            <ResizableHandle className="h-1 bg-zinc-800 hover:bg-primary/50 transition-colors z-10" />
             
-            <ResizablePanel defaultSize={30} minSize={15}>
-            <div className="h-full flex flex-col bg-zinc-900/80">
-              <div className="h-9 flex items-center justify-between px-4 border-b border-zinc-800 bg-zinc-900 shrink-0">
-                <span className="text-xs font-semibold text-zinc-400 uppercase tracking-wider">Console Output</span>
-                {output && (
-                  <button onClick={handleCopyOutput} className="text-zinc-500 hover:text-white transition">
-                    {copied ? <Check className="w-4 h-4 text-green-500" /> : <Copy className="w-4 h-4" />}
-                  </button>
-                )}
-              </div>
+            <ResizablePanel 
+              ref={consolePanelRef}
+              defaultSize={defaultLayout[1]} 
+              minSize={15}
+              collapsible={true}
+              onPanelCollapse={() => {
+                setIsConsoleCollapsed(true);
+                localStorage.setItem(`consoleCollapsed_${interviewId}`, "true");
+              }}
+              onPanelExpand={() => {
+                setIsConsoleCollapsed(false);
+                localStorage.setItem(`consoleCollapsed_${interviewId}`, "false");
+              }}
+            >
+              <div className="h-full flex flex-col bg-zinc-900/80">
+                <div className="h-9 flex items-center justify-between px-4 border-b border-zinc-800 bg-zinc-900 shrink-0 select-none">
+                  <div className="flex items-center gap-2">
+                    <Terminal className="w-3.5 h-3.5 text-zinc-400" />
+                    <span className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider">Terminal Console</span>
+                  </div>
+                  <div className="flex items-center gap-1">
+                    {output && (
+                      <button 
+                        onClick={handleCopyOutput} 
+                        className="p-1 hover:bg-zinc-800 text-zinc-500 hover:text-zinc-200 rounded transition cursor-pointer"
+                        title="Copy Console Output"
+                      >
+                        {copied ? <Check className="w-3.5 h-3.5 text-green-500" /> : <Copy className="w-3.5 h-3.5" />}
+                      </button>
+                    )}
+                    <button 
+                      onClick={() => {
+                        setIsConsoleCollapsed(true);
+                        localStorage.setItem(`consoleCollapsed_${interviewId}`, "true");
+                      }}
+                      className="p-1 hover:bg-zinc-850 text-zinc-500 hover:text-red-400 rounded transition cursor-pointer"
+                      title="Collapse Console"
+                    >
+                      <Minimize2 className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                </div>
+
               <div className="flex-1 overflow-auto p-4 font-mono text-sm">
                 {isExecuting ? (
                   <div className="flex items-center gap-2 text-zinc-500">
@@ -260,28 +452,32 @@ export function CodingEnvironment({ interviewId, problemStatement }: CodingEnvir
         </div>
 
         {/* AI Assistant Sidebar Overlay (Slides in from right) */}
-        <div 
-          className={`absolute top-0 right-0 bottom-0 w-80 lg:w-96 transform transition-transform duration-300 ease-in-out z-20 ${
-            isAssistantOpen ? "translate-x-0" : "translate-x-full"
-          }`}
-        >
-          <AIAssistantPanel 
-            isOpen={isAssistantOpen} 
-            onClose={() => setIsAssistantOpen(false)}
-            code={code}
-            language={language}
-            problemStatement={problemStatement}
-          />
-        </div>
+        {(!isAssessmentMode || isInterviewer) && (
+          <div 
+            className={`absolute top-0 right-0 bottom-0 w-80 lg:w-96 transform transition-transform duration-300 ease-in-out z-20 ${
+              isAssistantOpen ? "translate-x-0" : "translate-x-full"
+            }`}
+          >
+            <AIAssistantPanel 
+              isOpen={isAssistantOpen} 
+              onClose={() => setIsAssistantOpen(false)}
+              code={code}
+              language={language}
+              problemStatement={problemStatement}
+            />
+          </div>
+        )}
       </div>
 
-      <AIReviewModal 
-        isOpen={isReviewOpen}
-        onClose={() => setIsReviewOpen(false)}
-        code={code}
-        language={language}
-        problemStatement={problemStatement}
-      />
+      {(!isAssessmentMode || isInterviewer) && (
+        <AIReviewModal 
+          isOpen={isReviewOpen}
+          onClose={() => setIsReviewOpen(false)}
+          code={code}
+          language={language}
+          problemStatement={problemStatement}
+        />
+      )}
     </div>
   );
 }

@@ -13,9 +13,15 @@ interface ProblemPanelProps {
   interviewId?: string;
   problem?: any;
   onProblemUpdate?: (problem: any) => void;
+  isInterviewer?: boolean;
 }
 
-export function ProblemPanel({ interviewId, problem, onProblemUpdate }: ProblemPanelProps) {
+export function ProblemPanel({ 
+  interviewId, 
+  problem, 
+  onProblemUpdate,
+  isInterviewer = false 
+}: ProblemPanelProps) {
   const [isGenerating, setIsGenerating] = useState(false);
   const [topic, setTopic] = useState("DSA");
   const [difficulty, setDifficulty] = useState("Medium");
@@ -76,6 +82,20 @@ export function ProblemPanel({ interviewId, problem, onProblemUpdate }: ProblemP
   };
 
   if (!problem) {
+    if (!isInterviewer) {
+      return (
+        <div className="h-full bg-zinc-950 flex flex-col items-center justify-center p-6 text-center">
+          <div className="w-16 h-16 rounded-full bg-indigo-500/10 flex items-center justify-center mb-6 border border-indigo-500/20 animate-pulse shadow-[0_0_30px_rgba(99,102,241,0.2)]">
+            <BrainCircuit className="w-8 h-8 text-indigo-400" />
+          </div>
+          <h2 className="text-xl font-bold text-white mb-2">Waiting for Problem</h2>
+          <p className="text-zinc-400 max-w-xs text-sm">
+            Please wait. Your interviewer will generate or assign a technical problem statement shortly.
+          </p>
+        </div>
+      );
+    }
+
     return (
       <div className="h-full bg-zinc-950 flex flex-col items-center justify-center p-6 text-center">
         <div className="w-16 h-16 rounded-full bg-primary/10 flex items-center justify-center mb-6 border border-primary/20 shadow-[0_0_30px_rgba(var(--primary),0.2)]">
