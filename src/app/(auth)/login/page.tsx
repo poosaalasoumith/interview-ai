@@ -66,19 +66,37 @@ export default function LoginPage() {
     setIsGoogleLoading(true);
     try {
       const supabase = createClient();
-      const { error } = await supabase.auth.signInWithOAuth({
+      const { data, error } = await supabase.auth.signInWithOAuth({
         provider: "google",
         options: {
           redirectTo: `${window.location.origin}/auth/callback`,
+          skipBrowserRedirect: true,
         },
       });
+
       if (error) {
         throw error;
       }
+
+      if (data?.url) {
+        console.log("[Google OAuth] Redirecting client manually:", data.url);
+        window.location.href = data.url;
+      } else {
+        throw new Error("No redirect URL was returned from Supabase OAuth.");
+      }
     } catch (error: any) {
-      console.error("[Google OAuth Client Error]", error);
-      toast.error(error.message || "Failed to sign in with Google");
-      setIsGoogleLoading(false);
+      // Avoid false negatives or aborted request errors during page transition/unload
+      const isAbortError = 
+        error?.name === "AbortError" || 
+        error?.message?.toLowerCase().includes("abort") ||
+        error?.message?.toLowerCase().includes("failed to fetch") ||
+        error?.message?.toLowerCase().includes("networkerror");
+
+      if (!isAbortError) {
+        console.error("[Google OAuth Client Error]", error);
+        toast.error(error.message || "Failed to sign in with Google");
+        setIsGoogleLoading(false);
+      }
     }
   };
 
