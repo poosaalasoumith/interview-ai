@@ -1,16 +1,18 @@
 "use client";
 
 import React, { useState, useEffect } from "react";
-import { Calendar, Play, Clock, Sparkles } from "lucide-react";
+import { Calendar, Play, Clock, Sparkles, Ban, CheckCircle2, XCircle, AlertTriangle, TimerOff } from "lucide-react";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import Link from "next/link";
+import { isSessionFinalized, getSessionStatusLabel, getSessionStatusBadgeClasses } from "@/utils/interview-utils";
 
 interface CandidateInterview {
   id: string;
   title: string;
   scheduled_at: string;
   status: string;
+  session_status?: string;
   interviewer?: {
     id: string;
     name: string | null;
@@ -154,22 +156,34 @@ export function CandidateScheduleClient({ upcomingInterviews }: CandidateSchedul
             </div>
 
             <div className="flex items-center shrink-0">
-              <Link 
-                href={`/interview/${interview.id}`}
-                className={cn(
-                  buttonVariants({ 
-                    variant: isActiveLobby ? "default" : "outline", 
-                    size: "sm" 
-                  }),
-                  "w-full md:w-auto font-bold text-xs h-8.5 px-4.5 cursor-pointer shadow-sm transition-all",
-                  isActiveLobby 
-                    ? "bg-violet-600 hover:bg-violet-500 text-white shadow-violet-500/10 animate-bounce" 
-                    : "border-stone-800 bg-transparent text-zinc-400 hover:bg-stone-900 hover:text-zinc-200"
-                )}
-              >
-                <Play className={cn("h-3 w-3 mr-1.5", isActiveLobby && "fill-current")} />
-                {isActiveLobby ? "Join Live Lobby" : "Lobby Preview"}
-              </Link>
+              {isSessionFinalized(interview.session_status) ? (
+                /* Finalized session — disabled badge instead of join button */
+                <span
+                  className={cn(
+                    "inline-flex items-center gap-1.5 px-4 py-2 rounded-lg text-xs font-bold uppercase tracking-wider border",
+                    getSessionStatusBadgeClasses(interview.session_status)
+                  )}
+                >
+                  {getSessionStatusLabel(interview.session_status)}
+                </span>
+              ) : (
+                <Link 
+                  href={`/interview/${interview.id}`}
+                  className={cn(
+                    buttonVariants({ 
+                      variant: isActiveLobby ? "default" : "outline", 
+                      size: "sm" 
+                    }),
+                    "w-full md:w-auto font-bold text-xs h-8.5 px-4.5 cursor-pointer shadow-sm transition-all",
+                    isActiveLobby 
+                      ? "bg-violet-600 hover:bg-violet-500 text-white shadow-violet-500/10 animate-bounce" 
+                      : "border-stone-800 bg-transparent text-zinc-400 hover:bg-stone-900 hover:text-zinc-200"
+                  )}
+                >
+                  <Play className={cn("h-3 w-3 mr-1.5", isActiveLobby && "fill-current")} />
+                  {isActiveLobby ? "Join Live Lobby" : "Lobby Preview"}
+                </Link>
+              )}
             </div>
           </div>
         );

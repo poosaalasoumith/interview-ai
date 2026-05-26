@@ -7,6 +7,7 @@ import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 import Link from "next/link";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { syncAllStaleInterviews } from "@/app/actions/interviews";
 
 export default async function CandidateInterviewsPage() {
   const supabase = await createClient();
@@ -14,6 +15,13 @@ export default async function CandidateInterviewsPage() {
 
   if (!user) {
     redirect("/login");
+  }
+
+  // Synchronize dynamic lifecycle states in the DB prior to rendering
+  try {
+    await syncAllStaleInterviews();
+  } catch (e) {
+    console.error("[Candidate Interviews Page] Lifecycle status sync exception:", e);
   }
 
   // Fetch all interviews with nested interviewer and feedback data
@@ -33,13 +41,24 @@ export default async function CandidateInterviewsPage() {
 
   const typedInterviews = interviews || [];
   
-  // Filter interviews by status
+  // Filter interviews by session_status to support dynamic lifecycle views
   const upcoming = typedInterviews.filter(
-    (i) => i.status === "scheduled" || i.status === "in_progress"
+    (i) => i.session_status === "scheduled" || 
+           i.session_status === "waiting"
+  );
+
+  const liveInterviews = typedInterviews.filter(
+    (i) => i.session_status === "active"
   );
   
   const completed = typedInterviews.filter(
-    (i) => i.status === "completed"
+    (i) => i.session_status === "completed" || 
+           i.session_status === "submitted" || 
+           i.session_status === "expired" || 
+           i.session_status === "terminated" || 
+           i.session_status === "cancelled" || 
+           i.session_status === "canceled" ||
+           i.session_status === "missed"
   );
 
   return (
@@ -52,6 +71,34 @@ export default async function CandidateInterviewsPage() {
           Monitor your upcoming scheduled coding assessments and view comprehensive post-interview feedback.
         </p>
       </div>
+
+      {liveInterviews.length > 0 && (
+        <div className="p-5 rounded-2xl bg-gradient-to-r from-violet-600 to-indigo-600 border border-violet-500/30 flex flex-col md:flex-row md:items-center justify-between gap-4 shadow-xl shadow-violet-500/10 relative overflow-hidden animate-in fade-in slide-in-from-top-4 duration-300">
+          <div className="absolute top-0 right-0 w-64 h-64 bg-white/5 rounded-full blur-[80px] pointer-events-none" />
+          <div className="space-y-1.5 z-10">
+            <div className="flex items-center gap-2">
+              <span className="flex h-2 w-2 relative">
+                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-white opacity-75"></span>
+                <span className="relative inline-flex rounded-full h-2 w-2 bg-white"></span>
+              </span>
+              <span className="text-[10px] font-bold tracking-widest text-white uppercase bg-white/10 px-2 py-0.5 rounded">
+                Live Session In Progress
+              </span>
+            </div>
+            <h3 className="text-base font-extrabold text-white">{liveInterviews[0].title}</h3>
+            <p className="text-xs text-white/70">
+              with <span className="font-medium text-white">{liveInterviews[0].interviewer?.name || "Guest Interviewer"}</span> • Session is active and waiting for your participation.
+            </p>
+          </div>
+          <Link
+            href={`/interview/${liveInterviews[0].id}`}
+            className={cn(buttonVariants({ variant: "secondary" }), "font-black text-xs h-9 px-5 bg-white text-violet-750 hover:bg-zinc-100 cursor-pointer shadow-lg shrink-0 z-10")}
+          >
+            <Play className="w-3.5 h-3.5 mr-1.5 fill-current" />
+            Enter Active Interview Room
+          </Link>
+        </div>
+      )}
 
       {/* 1. Upcoming Interviews Section */}
       <section className="space-y-4">
@@ -115,11 +162,11 @@ export default async function CandidateInterviewsPage() {
                       </div>
                       <Badge variant="outline" className={cn(
                         "text-xxs font-bold uppercase shrink-0",
-                        interview.status === "in_progress" 
-                          ? "bg-primary/10 text-primary border-primary/20" 
+                        (interview.session_status === "active" || interview.session_status === "late_joined") 
+                          ? "bg-primary/10 text-primary border-primary/20 animate-pulse" 
                           : "bg-zinc-800/55 text-zinc-400 border-zinc-700/50"
                       )}>
-                        {interview.status}
+                        {interview.session_status}
                       </Badge>
                     </div>
                   </CardHeader>
@@ -216,7 +263,7 @@ export default async function CandidateInterviewsPage() {
               return (
                 <Card 
                   key={interview.id} 
-                  className="bg-zinc-900/40 backdrop-blur-sm border-zinc-800/80 hover:bg-zinc-900/60 transition-all duration-350 hover:border-zinc-700/85 relative overflow-hidden group"
+                  className="bg-zinc-900/15 backdrop-blur-sm border-zinc-900/60 opacity-65 saturate-50 contrast-95 transition-all duration-350 relative overflow-hidden group shadow-inner"
                 >
                   <CardHeader className="pb-2">
                     <div className="flex justify-between items-start gap-4">
@@ -224,12 +271,25 @@ export default async function CandidateInterviewsPage() {
                         <CardTitle className="text-base font-bold text-white group-hover:text-primary transition-colors">
                           {interview.title}
                         </CardTitle>
-                        <CardDescription className="text-xs text-zinc-500 mt-1">
-                          Completed on {formattedDate} • with {interview.interviewer?.name || "Guest Interviewer"}
+                        <CardDescription className="text-xs text-zinc-500 mt-1 flex flex-col gap-1.5">
+                          <span>Completed on {formattedDate} • with {interview.interviewer?.name || "Guest Interviewer"}</span>
+                          {interview.expiration_reason && (
+                            <span className="text-[10px] text-zinc-450 italic font-semibold mt-1 bg-zinc-950/30 border border-zinc-850/60 px-2 py-0.5 rounded w-fit">
+                              Resolution: {interview.expiration_reason} {interview.status_message ? `— ${interview.status_message}` : ""}
+                            </span>
+                          )}
                         </CardDescription>
                       </div>
-                      <Badge variant="outline" className="bg-emerald-500/10 text-emerald-400 border-emerald-500/20 text-xxs font-black uppercase tracking-wider shrink-0">
-                        Evaluated
+                      <Badge variant="outline" className={cn(
+                        "text-[9px] font-black uppercase tracking-wider shrink-0",
+                        interview.session_status === "completed" && "bg-emerald-500/10 text-emerald-400 border-emerald-500/20",
+                        interview.session_status === "submitted" && "bg-blue-500/10 text-blue-400 border-blue-500/20",
+                        interview.session_status === "expired" && "bg-amber-500/10 text-amber-400 border-amber-500/20",
+                        interview.session_status === "terminated" && "bg-red-500/10 text-red-400 border-red-500/20",
+                        interview.session_status === "cancelled" && "bg-zinc-850 text-zinc-500 border-zinc-800/50",
+                        interview.session_status === "missed" && "bg-red-950/20 text-red-450 border-red-900/30"
+                      )}>
+                        {interview.session_status}
                       </Badge>
                     </div>
                   </CardHeader>

@@ -7,6 +7,8 @@ import { buttonVariants } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import Link from "next/link";
 import { redirect } from "next/navigation";
+import { syncAllStaleInterviews } from "@/app/actions/interviews";
+import { isSessionFinalized } from "@/utils/interview-utils";
 
 export default async function CandidateDashboard() {
   const supabase = await createClient();
@@ -14,6 +16,13 @@ export default async function CandidateDashboard() {
 
   if (!user) {
     redirect("/login");
+  }
+
+  // Synchronize dynamic lifecycle states in the DB prior to rendering
+  try {
+    await syncAllStaleInterviews();
+  } catch (e) {
+    console.error("[Candidate Dashboard] Lifecycle status sync exception:", e);
   }
 
   // Fetch real interviews for the logged-in candidate
@@ -27,8 +36,16 @@ export default async function CandidateDashboard() {
     .order("scheduled_at", { ascending: true });
 
   const typedInterviews = interviews || [];
-  const upcomingInterviews = typedInterviews.filter(i => i.status === "scheduled" || i.status === "in_progress");
-  const completedInterviews = typedInterviews.filter(i => i.status === "completed");
+  const upcomingInterviews = typedInterviews.filter(i => 
+    i.session_status === "scheduled" || 
+    i.session_status === "waiting"
+  );
+  // Only truly active sessions — never finalized ones
+  const liveInterviews = typedInterviews.filter(i => 
+    (i.session_status === "active" || i.session_status === "late_joined") &&
+    !isSessionFinalized(i.session_status)
+  );
+  const completedInterviews = typedInterviews.filter(i => isSessionFinalized(i.session_status));
 
   // Fetch candidate feedback scores
   const { data: feedbackData } = await supabase
@@ -73,6 +90,34 @@ export default async function CandidateDashboard() {
           Practice Coding
         </Link>
       </div>
+
+      {liveInterviews.length > 0 && (
+        <div className="p-5 rounded-2xl bg-gradient-to-r from-violet-600 to-indigo-600 border border-violet-500/30 flex flex-col md:flex-row md:items-center justify-between gap-4 shadow-xl shadow-violet-500/10 relative overflow-hidden animate-in fade-in slide-in-from-top-4 duration-300">
+          <div className="absolute top-0 right-0 w-64 h-64 bg-white/5 rounded-full blur-[80px] pointer-events-none" />
+          <div className="space-y-1.5 z-10">
+            <div className="flex items-center gap-2">
+              <span className="flex h-2 w-2 relative">
+                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-white opacity-75"></span>
+                <span className="relative inline-flex rounded-full h-2 w-2 bg-white"></span>
+              </span>
+              <span className="text-[10px] font-bold tracking-widest text-white uppercase bg-white/10 px-2 py-0.5 rounded">
+                Live Session In Progress
+              </span>
+            </div>
+            <h3 className="text-base font-extrabold text-white">{liveInterviews[0].title}</h3>
+            <p className="text-xs text-white/70">
+              with <span className="font-medium text-white">{liveInterviews[0].interviewer?.name || "Guest Interviewer"}</span> • Session is active and waiting for your participation.
+            </p>
+          </div>
+          <Link
+            href={`/interview/${liveInterviews[0].id}`}
+            className={cn(buttonVariants({ variant: "secondary" }), "font-black text-xs h-9 px-5 bg-white text-violet-750 hover:bg-zinc-100 cursor-pointer shadow-lg shrink-0 z-10")}
+          >
+            <Play className="w-3.5 h-3.5 mr-1.5 fill-current" />
+            Enter Active Interview Room
+          </Link>
+        </div>
+      )}
 
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
         <Card className="bg-zinc-900/40 backdrop-blur-sm border-zinc-800/80 hover:bg-zinc-900/60 transition-colors">

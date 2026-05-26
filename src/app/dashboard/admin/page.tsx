@@ -17,10 +17,18 @@ import {
 } from "lucide-react";
 import { OverviewChart } from "@/components/dashboard/overview-chart";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { syncAllStaleInterviews } from "@/app/actions/interviews";
 
 export default async function AdminDashboard() {
   const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
+  const { data: { user }, error: authError } = await supabase.auth.getUser();
+
+  // Run lifecycle synchronization prior to calculation of admin telemetry
+  try {
+    await syncAllStaleInterviews();
+  } catch (e) {
+    console.error("[Admin Dashboard] Lifecycle status sync exception:", e);
+  }
 
   // Fetch real counts from the database to drive the admin metrics dynamically
   const { count: realUsersCount } = await supabase
@@ -34,14 +42,19 @@ export default async function AdminDashboard() {
   const { count: realCompletedCount } = await supabase
     .from("interviews")
     .select("*", { count: "exact", head: true })
-    .eq("status", "completed");
+    .in("session_status", ["completed", "submitted", "expired", "terminated"]);
+
+  const { count: realActiveCount } = await supabase
+    .from("interviews")
+    .select("*", { count: "exact", head: true })
+    .eq("session_status", "active");
 
   const { data: scores } = await supabase
     .from("feedback")
     .select("overall_score");
 
   const totalUsers = 1240 + (realUsersCount || 0);
-  const activeInterviews = 38 + (realInterviewsCount || 0);
+  const activeInterviews = (realActiveCount || 0);
   
   const completionRate = realInterviewsCount && realInterviewsCount > 0 
     ? Math.round(((realCompletedCount || 0) / realInterviewsCount) * 100) 

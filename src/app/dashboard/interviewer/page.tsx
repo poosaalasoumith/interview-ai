@@ -7,6 +7,7 @@ import { Button, buttonVariants } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import Link from "next/link";
 import { redirect } from "next/navigation";
+import { syncAllStaleInterviews } from "@/app/actions/interviews";
 
 export default async function InterviewerDashboard() {
   const supabase = await createClient();
@@ -14,6 +15,13 @@ export default async function InterviewerDashboard() {
 
   if (!user) {
     redirect("/login");
+  }
+
+  // Synchronize dynamic lifecycle states in the DB prior to rendering
+  try {
+    await syncAllStaleInterviews();
+  } catch (e) {
+    console.error("[Interviewer Dashboard] Lifecycle status sync exception:", e);
   }
 
   // Fetch all interviews by this interviewer, joining candidate info and feedback presence
@@ -32,21 +40,34 @@ export default async function InterviewerDashboard() {
   // Calculate Stats
   const todayStr = new Date().toDateString();
   const upcomingToday = typedInterviews.filter(i => 
-    (i.status === "scheduled" || i.status === "in_progress") && 
+    (i.session_status === "scheduled" || i.session_status === "waiting" || i.session_status === "active") && 
     new Date(i.scheduled_at).toDateString() === todayStr
   );
 
   const totalInterviews = typedInterviews.length;
-  const completedInterviews = typedInterviews.filter(i => i.status === "completed");
-  const hoursSpent = completedInterviews.length; // Assume 1 hour per round
+  const completedInterviews = typedInterviews.filter(i => 
+    i.session_status === "completed" || 
+    i.session_status === "submitted" || 
+    i.session_status === "expired" || 
+    i.session_status === "terminated" || 
+    i.session_status === "cancelled" || 
+    i.session_status === "canceled" ||
+    i.session_status === "missed"
+  );
+  const hoursSpent = completedInterviews.filter(i => i.session_status === "completed" || i.session_status === "submitted").length; // Assume 1 hour per completed/submitted round
   
-  // Pending feedback reviews (completed interviews that do not have a feedback row)
+  // Pending feedback reviews (completed/submitted interviews that do not have a feedback row)
   const pendingReviews = typedInterviews.filter(i => 
-    i.status === "completed" && (!i.feedback || (Array.isArray(i.feedback) ? i.feedback.length === 0 : !i.feedback))
+    (i.session_status === "completed" || i.session_status === "submitted") && 
+    (!i.feedback || (Array.isArray(i.feedback) ? i.feedback.length === 0 : !i.feedback))
   );
 
-  // Most immediate upcoming session
-  const upcomingSessions = typedInterviews.filter(i => i.status === "scheduled" || i.status === "in_progress");
+  // Most immediate upcoming or active session
+  const upcomingSessions = typedInterviews.filter(i => 
+    i.session_status === "scheduled" || 
+    i.session_status === "waiting" || 
+    i.session_status === "active"
+  );
   const nextSession = upcomingSessions.length > 0 ? upcomingSessions[0] : null;
 
   return (

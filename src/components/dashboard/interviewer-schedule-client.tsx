@@ -46,6 +46,7 @@ import {
 import { toast } from "sonner";
 import Link from "next/link";
 import { cn } from "@/lib/utils";
+import { isSessionFinalized, getSessionStatusLabel, getSessionStatusBadgeClasses } from "@/utils/interview-utils";
 
 interface Candidate {
   id: string;
@@ -60,6 +61,7 @@ interface StandardInterview {
   candidate_id: string;
   interviewer_id: string;
   status: string;
+  session_status?: string;
   scheduled_at: string;
   problem_statement: any;
   candidate?: Candidate;
@@ -579,12 +581,22 @@ export function InterviewerScheduleClient({
                         <div className="grid gap-3 md:grid-cols-2">
                           {/* 1. Accepted Candidates (Linked standard accounts) */}
                           {schedule.candidate_assignments?.map((assignment) => {
-                            const liveRoomLink = getLiveRoomLink(assignment.candidate.email, schedule.scheduled_at);
+                            const matchedInterview = standardList.find(i => 
+                              i.candidate?.email.toLowerCase() === assignment.candidate.email.toLowerCase() &&
+                              new Date(i.scheduled_at).getTime() === new Date(schedule.scheduled_at).getTime()
+                            );
+                            const isFinalized = matchedInterview ? isSessionFinalized(matchedInterview.session_status) : false;
+                            const liveRoomLink = matchedInterview ? `/interview/${matchedInterview.id}` : null;
 
                             return (
                               <div 
                                 key={assignment.id}
-                                className="flex items-center justify-between p-3.5 rounded-xl border border-stone-900/60 bg-stone-900/20 hover:border-stone-800 transition-colors"
+                                className={cn(
+                                  "flex items-center justify-between p-3.5 rounded-xl border border-stone-900/60 transition-colors",
+                                  isFinalized 
+                                    ? "bg-stone-900/5 border-stone-950 opacity-60 saturate-50 contrast-90"
+                                    : "bg-stone-900/20 hover:border-stone-800"
+                                )}
                               >
                                 <div className="flex items-center gap-3 min-w-0">
                                   <Avatar className="h-10 w-10 border border-stone-800 shrink-0">
@@ -604,7 +616,16 @@ export function InterviewerScheduleClient({
                                 </div>
 
                                 <div className="flex items-center gap-1.5">
-                                  {liveRoomLink ? (
+                                  {isFinalized && matchedInterview ? (
+                                    <span
+                                      className={cn(
+                                        "inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-[10px] font-bold uppercase tracking-wider border",
+                                        getSessionStatusBadgeClasses(matchedInterview.session_status)
+                                      )}
+                                    >
+                                      {getSessionStatusLabel(matchedInterview.session_status)}
+                                    </span>
+                                  ) : liveRoomLink ? (
                                     <Link href={liveRoomLink} className="inline-flex">
                                       <Button 
                                         size="sm"
@@ -722,8 +743,11 @@ export function InterviewerScheduleClient({
                   <Card 
                     key={interview.id} 
                     className={cn(
-                      "bg-stone-950/40 border-stone-900 hover:border-stone-800/80 transition-all duration-300 relative overflow-hidden group",
-                      isToday && "border-l-4 border-l-violet-500"
+                      "transition-all duration-300 relative overflow-hidden group",
+                      isSessionFinalized(interview.session_status)
+                        ? "bg-stone-950/15 border-stone-950 opacity-65 saturate-50 contrast-95 pointer-events-auto shadow-inner"
+                        : "bg-stone-950/40 border-stone-900 hover:border-stone-800/80",
+                      isToday && !isSessionFinalized(interview.session_status) && "border-l-4 border-l-violet-500"
                     )}
                   >
                     <div className="absolute top-0 right-0 w-32 h-32 bg-violet-500/5 rounded-full blur-2xl pointer-events-none group-hover:bg-violet-500/10 transition-colors" />
@@ -740,13 +764,16 @@ export function InterviewerScheduleClient({
                         </div>
                         <Badge variant="outline" className={cn(
                           "text-[10px] px-1.5 h-4.5 font-bold shrink-0",
-                          interview.status === "completed" 
-                            ? "bg-green-500/10 text-green-400 border-green-500/20" 
+                          isSessionFinalized(interview.session_status)
+                            ? getSessionStatusBadgeClasses(interview.session_status)
                             : interview.status === "in_progress" 
                               ? "bg-violet-500/10 text-violet-300 border-violet-500/20 animate-pulse" 
                               : "bg-stone-900 text-zinc-400 border-stone-800"
                         )}>
-                          {interview.status}
+                          {isSessionFinalized(interview.session_status)
+                            ? getSessionStatusLabel(interview.session_status)
+                            : interview.status
+                          }
                         </Badge>
                       </div>
                     </CardHeader>
@@ -777,7 +804,29 @@ export function InterviewerScheduleClient({
                       </div>
 
                       <div className="flex gap-2 pt-1.5 justify-end">
-                        {interview.status !== "completed" ? (
+                        {isSessionFinalized(interview.session_status) ? (
+                          /* Finalized — show status badge and review link */
+                          <>
+                            <span
+                              className={cn(
+                                "inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-[10px] font-bold uppercase tracking-wider border",
+                                getSessionStatusBadgeClasses(interview.session_status)
+                              )}
+                            >
+                              {getSessionStatusLabel(interview.session_status)}
+                            </span>
+                            <Link href={`/dashboard/interviewer/review/${interview.id}`} className="inline-flex">
+                              <Button 
+                                size="sm"
+                                variant="secondary"
+                                className="bg-stone-900 hover:bg-stone-850 text-zinc-300 border border-stone-800 text-[11px] h-7 px-3 cursor-pointer"
+                              >
+                                <ExternalLink className="w-3 h-3 mr-1" />
+                                View Review
+                              </Button>
+                            </Link>
+                          </>
+                        ) : interview.status !== "completed" ? (
                           <Link href={`/interview/${interview.id}`} className="inline-flex">
                             <Button 
                               size="sm"

@@ -12,6 +12,7 @@ import { CommandMenu } from "@/components/dashboard/command-menu";
 import { DynamicBreadcrumbs } from "@/components/dashboard/dynamic-breadcrumbs";
 import { InteractiveNotifications } from "@/components/dashboard/interactive-notifications";
 import { BrandLogo } from "@/components/ui/brand-logo";
+import { RealtimeDashboardSync } from "@/components/dashboard/realtime-dashboard-sync";
 
 export default async function DashboardLayout({
   children,
@@ -49,6 +50,7 @@ export default async function DashboardLayout({
 
   return (
     <div className="flex min-h-screen bg-background dark:bg-zinc-950 font-sans selection:bg-primary/20">
+      <RealtimeDashboardSync />
       {/* Sidebar - Minimal premium glassmorphic sidebar */}
       <aside className="hidden md:flex w-[260px] flex-col border-r bg-card/40 backdrop-blur-xl">
         <div className="h-14 flex items-center px-6 border-b border-border/50">

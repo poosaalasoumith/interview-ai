@@ -3,6 +3,7 @@
 import { createClient } from "@/utils/supabase/server";
 import { revalidatePath } from "next/cache";
 import { sendInterviewInvitation } from "@/lib/email";
+import { isSessionFinalized } from "@/utils/interview-utils";
 import crypto from "crypto";
 
 export async function getCandidates() {
@@ -19,12 +20,166 @@ export async function getCandidates() {
   return data || [];
 }
 
+export async function deriveInterviewState(interview: any, durationMinutes: number = 60): Promise<string> {
+  const now = new Date();
+
+  // ──────────────────────────────────────────────────────────────────────────
+  // PRIORITY 0: Permanently finalized session_status values.
+  // Once the DB session_status is any terminal state, honour it unconditionally
+  // regardless of actual_started_at or any other field.  This is the single
+  // authoritative gate that prevents any re-entry / state reset.
+  // ──────────────────────────────────────────────────────────────────────────
+  if (isSessionFinalized(interview.session_status)) {
+    // Normalise cancelled/canceled to a single canonical value
+    if (interview.session_status === "cancelled" || interview.session_status === "canceled") {
+      return "cancelled";
+    }
+    return interview.session_status;
+  }
+
+  // 1. Legacy status field fallback
+  if (interview.status === "cancelled") {
+    return "cancelled";
+  }
+
+  // 2. If actual_started_at is set (candidate joined the room)
+  if (interview.actual_started_at) {
+    const startedAt = new Date(interview.actual_started_at);
+    const timeExtended = interview.time_extended_minutes || 0;
+    const totalDuration = durationMinutes + timeExtended;
+    const expiresAt = interview.expires_at 
+      ? new Date(interview.expires_at) 
+      : new Date(startedAt.getTime() + totalDuration * 60 * 1000);
+    
+    // Check if expired
+    if (now.getTime() > expiresAt.getTime()) {
+      return "expired";
+    }
+
+    // Check if completed via terminal fields
+    if (interview.status === "completed" || interview.ended_at || interview.actual_ended_at) {
+      return interview.session_status === "submitted" ? "submitted" : "completed";
+    }
+
+    return "active";
+  }
+
+  // 3. If actual_started_at is NOT set (candidate never joined)
+  const scheduledTime = new Date(interview.scheduled_at).getTime();
+  const joinDeadline = scheduledTime + 15 * 60 * 1000; // 15 mins window
+
+  if (now.getTime() > joinDeadline) {
+    return "missed";
+  }
+
+  // Waiting window: 15 minutes before scheduled time until 15 minutes after (or until join deadline)
+  const waitingStart = scheduledTime - 15 * 60 * 1000;
+  if (now.getTime() >= waitingStart && now.getTime() <= joinDeadline) {
+    return "waiting";
+  }
+
+  return "scheduled";
+}
+
+export async function syncAllStaleInterviews() {
+  const supabase = await createClient();
+  
+  // Fetch all interviews to check if their state needs syncing
+  const { data: interviews, error } = await supabase
+    .from("interviews")
+    .select(`
+      *,
+      interview_sessions(duration_minutes)
+    `);
+
+  if (error || !interviews) {
+    return;
+  }
+
+  const nowStr = new Date().toISOString();
+
+  for (const interview of interviews) {
+    const session = Array.isArray(interview.interview_sessions)
+      ? interview.interview_sessions[0]
+      : interview.interview_sessions;
+    const duration = session?.duration_minutes || 60;
+    
+    const derived = await deriveInterviewState(interview, duration);
+
+    // If derived status is different from DB's session_status, update it!
+    if (derived !== interview.session_status) {
+      console.log(`[Lifecycle Sync] Auto-transitioning interview ${interview.id} from ${interview.session_status} to ${derived}`);
+      
+      const updatePayload: any = {
+        session_status: derived
+      };
+
+      // Ensure status is aligned
+      if (derived === "missed") {
+        updatePayload.status = "completed";
+        updatePayload.ended_at = new Date(new Date(interview.scheduled_at).getTime() + 15 * 60 * 1000).toISOString();
+        updatePayload.expiration_reason = "Candidate failed to join";
+        updatePayload.status_message = "Candidate missed the 15-minute scheduled join window.";
+      } else if (derived === "expired") {
+        updatePayload.status = "completed";
+        const startedAt = new Date(interview.actual_started_at || interview.created_at).getTime();
+        const totalDuration = duration + (interview.time_extended_minutes || 0);
+        const expiresAtStr = interview.expires_at || new Date(startedAt + totalDuration * 60 * 1000).toISOString();
+        updatePayload.ended_at = expiresAtStr;
+        updatePayload.actual_ended_at = expiresAtStr;
+        updatePayload.expires_at = expiresAtStr;
+        updatePayload.expiration_reason = "Session duration elapsed";
+        updatePayload.status_message = "Assessment session auto-expired.";
+      } else if (derived === "completed" || derived === "submitted" || derived === "terminated") {
+        updatePayload.status = "completed";
+        if (!interview.ended_at && !interview.actual_ended_at) {
+          updatePayload.ended_at = nowStr;
+          updatePayload.actual_ended_at = nowStr;
+        }
+        if (derived === "terminated") {
+          updatePayload.expiration_reason = "Admin terminated session";
+          updatePayload.status_message = "Proctor forcefully terminated the session.";
+        } else if (derived === "completed" && !interview.expiration_reason) {
+          updatePayload.expiration_reason = "Interview completed successfully";
+          updatePayload.status_message = "Interview completed successfully.";
+        } else if (derived === "submitted" && !interview.expiration_reason) {
+          updatePayload.expiration_reason = "Interview completed successfully";
+          updatePayload.status_message = "Assessment auto-submitted on session expiration";
+        }
+      } else if (derived === "cancelled") {
+        updatePayload.status = "cancelled";
+        updatePayload.session_status = "cancelled";
+        if (!interview.ended_at) {
+          updatePayload.ended_at = nowStr;
+        }
+        updatePayload.expiration_reason = "Interviewer canceled interview";
+      } else if (derived === "active") {
+        updatePayload.status = "in_progress";
+      } else if (derived === "scheduled" || derived === "waiting") {
+        updatePayload.status = "scheduled";
+      }
+
+      await supabase
+        .from("interviews")
+        .update(updatePayload)
+        .eq("id", interview.id);
+    }
+  }
+}
+
 export async function getInterviews() {
   const supabase = await createClient();
   const { data: { user } } = await supabase.auth.getUser();
 
   if (!user) {
     return [];
+  }
+
+  // Automatically sync stale/expired interviews before retrieving
+  try {
+    await syncAllStaleInterviews();
+  } catch (e) {
+    console.error("[Interviews Action] Stale lifecycle sync exception:", e);
   }
 
   // Get user role
@@ -146,13 +301,21 @@ export async function cancelInterview(interviewId: string) {
     return { error: "Unauthorized." };
   }
 
+  // Perform logical cancellation instead of hard delete to preserve audit history
   const { error } = await supabase
     .from("interviews")
-    .delete()
+    .update({
+      status: "cancelled",
+      session_status: "cancelled",
+      ended_at: new Date().toISOString(),
+      completed_by: user.id,
+      expiration_reason: "Interviewer canceled interview",
+      status_message: "Technical assessment was cancelled by the proctor"
+    })
     .eq("id", interviewId);
 
   if (error) {
-    console.error("[Interviews Action] Error deleting interview:", error.message);
+    console.error("[Interviews Action] Error cancelling interview:", error.message);
     return { error: error.message };
   }
 
@@ -210,41 +373,83 @@ export async function endInterviewAndGenerateReport(interviewId: string) {
     console.error("[Interviews Action] AI Summary generation network error:", err);
   }
 
-  // Fallback if AI fails
-  const report = aiReport || {
-    technicalScore: 75,
-    communicationScore: 80,
-    overallScore: 78,
-    summary: "The candidate completed the coding exercise. See their code submissions for technical details.",
-    strengths: ["Completed the exercise", "Demonstrated basic problem-solving"],
-    weaknesses: ["Needs improvement in time complexity optimizations"],
-    recommendation: "Hire"
-  };
+  // 3.5. Fetch existing feedback to preserve comments and prior AI feedback if new evaluation fails
+  const { data: existingFeedback } = await supabase
+    .from("feedback")
+    .select("*")
+    .eq("interview_id", interviewId)
+    .maybeSingle();
 
-  // 4. Save to feedback table
+  // Determine the report to save, preserving prior successful AI analysis if present
+  let report = aiReport;
+  if (!report) {
+    if (existingFeedback?.ai_feedback) {
+      try {
+        const parsed = JSON.parse(existingFeedback.ai_feedback);
+        report = {
+          technicalScore: parsed.technicalScore ?? parsed.technical_score ?? existingFeedback.technical_score ?? 75,
+          communicationScore: parsed.communicationScore ?? parsed.communication_score ?? existingFeedback.communication_score ?? 80,
+          overallScore: parsed.overallScore ?? parsed.overall_score ?? existingFeedback.overall_score ?? 78,
+          summary: parsed.summary ?? existingFeedback.ai_feedback,
+          strengths: parsed.strengths ?? ["Completed the exercise"],
+          weaknesses: parsed.weaknesses ?? ["Needs improvement in time complexity optimizations"],
+          recommendation: parsed.recommendation ?? "Hire"
+        };
+        console.log("[Interviews Action] Preserved and reused existing AI feedback.");
+      } catch (e) {
+        report = {
+          technicalScore: existingFeedback.technical_score ?? 75,
+          communicationScore: existingFeedback.communication_score ?? 80,
+          overall_score: existingFeedback.overall_score ?? 78,
+          summary: existingFeedback.ai_feedback,
+          strengths: ["Completed the exercise"],
+          weaknesses: ["Needs improvement in time complexity optimizations"],
+          recommendation: "Hire"
+        };
+      }
+    } else {
+      // Standard fallback
+      report = {
+        technicalScore: 75,
+        communicationScore: 80,
+        overallScore: 78,
+        summary: "The candidate completed the coding exercise. See their code submissions for technical details.",
+        strengths: ["Completed the exercise", "Demonstrated basic problem-solving"],
+        weaknesses: ["Needs improvement in time complexity optimizations"],
+        recommendation: "Hire"
+      };
+    }
+  }
+
+  // 4. Save to feedback table using upsert to prevent unique key constraint violations
   const { error: feedbackError } = await supabase
     .from("feedback")
-    .insert([
-      {
-        interview_id: interviewId,
-        candidate_id: interview.candidate_id,
-        interviewer_id: interview.interviewer_id,
-        technical_score: report.technicalScore,
-        communication_score: report.communicationScore,
-        overall_score: report.overallScore,
-        ai_feedback: typeof report === "string" ? report : JSON.stringify(report)
-      }
-    ]);
+    .upsert({
+      interview_id: interviewId,
+      candidate_id: interview.candidate_id,
+      interviewer_id: interview.interviewer_id,
+      technical_score: report.technicalScore,
+      communication_score: report.communicationScore,
+      overall_score: report.overallScore,
+      ai_feedback: typeof report === "string" ? report : JSON.stringify(report),
+      interviewer_comments: existingFeedback?.interviewer_comments || null
+    }, {
+      onConflict: "interview_id"
+    });
 
   if (feedbackError) {
     console.error("[Interviews Action] Error saving feedback:", feedbackError.message);
     return { error: `Failed to save feedback: ${feedbackError.message}` };
   }
 
-  // 5. Update interview status to completed
+  // 5. Update interview status AND session_status to completed to trigger real-time UI transitions smoothly
   const { error: updateError } = await supabase
     .from("interviews")
-    .update({ status: "completed" })
+    .update({ 
+      status: "completed",
+      session_status: "completed",
+      actual_ended_at: new Date().toISOString()
+    })
     .eq("id", interviewId);
 
   if (updateError) {
@@ -530,6 +735,13 @@ export async function getScheduledInterviews() {
     return [];
   }
 
+  // Automatically sync stale/expired interviews before retrieving
+  try {
+    await syncAllStaleInterviews();
+  } catch (e) {
+    console.error("[Interviews Action] Stale lifecycle sync exception in scheduled:", e);
+  }
+
   // Get user role
   const { data: userProfile } = await supabase
     .from("users")
@@ -623,18 +835,25 @@ export async function cancelScheduledInterview(scheduleId: string) {
       }
     ]);
 
-  // Clean up standard interviews rows generated for these candidates
+  // Clean up standard interviews rooms logically instead of hard delete
   if (candidateIds.length > 0) {
     const { error: deleteRoomsError } = await supabase
       .from("interviews")
-      .delete()
+      .update({
+        status: "cancelled",
+        session_status: "cancelled",
+        ended_at: new Date().toISOString(),
+        completed_by: user.id,
+        expiration_reason: "Interviewer canceled interview",
+        status_message: "Interviewer cancelled the scheduled interview session."
+      })
       .eq("interviewer_id", schedule.interviewer_id)
       .eq("status", "scheduled")
       .eq("scheduled_at", schedule.scheduled_at)
       .in("candidate_id", candidateIds);
 
     if (deleteRoomsError) {
-      console.error("[Interviews Action] Warning: Error cleaning up active interview rooms:", deleteRoomsError.message);
+      console.error("[Interviews Action] Warning: Error logically cancelling active interview rooms:", deleteRoomsError.message);
     }
   }
 
@@ -704,6 +923,11 @@ export async function initializeInterviewSession(roomId: string) {
     return { error: "Interview not found." };
   }
 
+  // FINALIZATION GUARD: Permanently block re-initialization of finalized sessions
+  if (isSessionFinalized(interview.session_status)) {
+    return { error: "This interview session has been permanently finalized and cannot be restarted." };
+  }
+
   // Only allow candidate or interviewer to initialize (in this case, candidate enters first)
   // If actual_started_at is already set, do not override
   if (interview.actual_started_at) {
@@ -718,12 +942,25 @@ export async function initializeInterviewSession(roomId: string) {
   const isLate = nowTime > scheduledTime;
   const sessionStatus = isLate ? "late_joined" : "active";
 
+  // Fetch session duration to persist expires_at
+  const { data: session } = await supabase
+    .from("interview_sessions")
+    .select("duration_minutes")
+    .eq("interview_id", roomId)
+    .maybeSingle();
+
+  const duration = session?.duration_minutes || 60;
+  const expiresAtStr = new Date(Date.now() + duration * 60 * 1000).toISOString();
+
   const { data: updatedInterview, error: updateError } = await supabase
     .from("interviews")
     .update({
       actual_started_at: nowStr,
       candidate_joined_at: nowStr,
       session_status: sessionStatus,
+      status: "in_progress", // Set status to in_progress instantly
+      expires_at: expiresAtStr,
+      remaining_seconds: duration * 60,
       join_deadline_at: new Date(scheduledTime + 15 * 60 * 1000).toISOString()
     })
     .eq("id", roomId)
@@ -803,6 +1040,7 @@ export async function extendInterviewSessionTime(roomId: string, minutes: number
     const start = new Date(interview.actual_started_at).getTime();
     const newEnd = new Date(start + (duration + newExtendedMinutes) * 60 * 1000).toISOString();
     updatePayload.actual_ended_at = newEnd;
+    updatePayload.expires_at = newEnd; // Sync database expires_at with extended time bounds!
   }
 
   const { data: updatedInterview, error: updateError } = await supabase
@@ -874,8 +1112,13 @@ export async function terminateInterviewSessionAction(roomId: string) {
   const { data: updatedInterview, error: updateError } = await supabase
     .from("interviews")
     .update({
+      status: "completed", // Transition to completed
       session_status: "terminated",
-      actual_ended_at: nowStr
+      actual_ended_at: nowStr,
+      ended_at: nowStr,
+      completed_by: user.id,
+      expiration_reason: "Admin terminated session",
+      status_message: "Proctor forcefully terminated the session."
     })
     .eq("id", roomId)
     .select()
@@ -904,6 +1147,83 @@ export async function terminateInterviewSessionAction(roomId: string) {
 
   revalidatePath(`/interview/${roomId}`, "layout");
   revalidatePath("/dashboard", "layout");
+  return { success: true, interview: updatedInterview };
+}
+
+export async function toggleLockSessionAction(roomId: string, isLock: boolean, reason?: string) {
+  const supabase = await createClient();
+  const { data: { user } } = await supabase.auth.getUser();
+
+  if (!user) {
+    return { error: "Unauthorized: Please log in." };
+  }
+
+  // 1. Fetch the interview details
+  const { data: interview, error: fetchError } = await supabase
+    .from("interviews")
+    .select("*, interviewer_id")
+    .eq("id", roomId)
+    .single();
+
+  if (fetchError || !interview) {
+    return { error: "Interview not found." };
+  }
+
+  // 2. Ensure user is authorized (interviewer or admin)
+  const { data: userProfile } = await supabase
+    .from("users")
+    .select("role, name")
+    .eq("id", user.id)
+    .single();
+
+  if (!userProfile || (user.id !== interview.interviewer_id && userProfile.role !== "admin")) {
+    return { error: "Unauthorized: Only the proctor or an admin can modify lock status." };
+  }
+
+  const nowStr = new Date().toISOString();
+  const moderatorName = userProfile.name || "System Moderator";
+
+  // 3. Update the interviews table with the lock state
+  const updateData: any = {
+    is_locked: isLock,
+    locked_by: isLock ? user.id : null,
+    locked_at: isLock ? nowStr : null,
+    unlock_at: isLock ? null : nowStr,
+    lock_reason: isLock ? (reason || "Locked by moderator") : null
+  };
+
+  const { data: updatedInterview, error: updateError } = await supabase
+    .from("interviews")
+    .update(updateData)
+    .eq("id", roomId)
+    .select()
+    .single();
+
+  if (updateError) {
+    console.error("[Interviews Action] Error updating lock status:", updateError.message);
+    return { error: updateError.message };
+  }
+
+  // 4. Log the audit event in interview_telemetry
+  const eventType = isLock ? "SESSION_LOCKED" : "SESSION_UNLOCKED";
+  await supabase
+    .from("interview_telemetry")
+    .insert([
+      {
+        interview_id: roomId,
+        event_type: eventType,
+        details: {
+          timestamp: nowStr,
+          moderatorId: user.id,
+          moderatorName: moderatorName,
+          reason: reason || (isLock ? "Locked by moderator" : "Unlocked by moderator")
+        }
+      }
+    ]);
+
+  revalidatePath(`/interview/${roomId}`, "layout");
+  revalidatePath("/dashboard", "layout");
+  
   return { success: true, interview: updatedInterview };
 }
 
@@ -938,12 +1258,17 @@ export async function autoSubmitInterviewAction(roomId: string, code: string, la
     console.error("[Interviews Action] Error in autoSubmitInterviewAction (submission insert):", submissionError.message);
   }
 
-  // Update interview status
+  // Update interview status with enterprise audit reasons
   const { data: updatedInterview, error: updateError } = await supabase
     .from("interviews")
     .update({
+      status: "completed", // Transition to completed history bounds
       session_status: "submitted",
-      actual_ended_at: nowStr
+      actual_ended_at: nowStr,
+      ended_at: nowStr,
+      completed_by: user.id,
+      expiration_reason: "Session auto-expired",
+      status_message: "Assessment auto-submitted on session expiration"
     })
     .eq("id", roomId)
     .select()
@@ -953,6 +1278,15 @@ export async function autoSubmitInterviewAction(roomId: string, code: string, la
     console.error("[Interviews Action] Error updating status in autoSubmitInterviewAction:", updateError.message);
     return { error: updateError.message };
   }
+
+  // Trigger feedback report generation automatically in the background
+  try {
+    await endInterviewAndGenerateReport(roomId);
+    console.log("[AutoSubmit] Feedback generated successfully in background on expiration.");
+  } catch (e) {
+    console.error("[AutoSubmit] Error generating feedback report in background on expiration:", e);
+  }
+
 
   // Insert a telemetry event
   await supabase

@@ -36,6 +36,7 @@ import {
   Maximize2,
   Minimize2,
   Lock,
+  Unlock,
   AlertTriangle,
   ShieldAlert,
   Volume2,
@@ -55,12 +56,14 @@ import {
   extendInterviewSessionTime,
   terminateInterviewSessionAction,
   autoSubmitInterviewAction,
+  toggleLockSessionAction,
 } from "@/app/actions/interviews";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
 import { LiveKitErrorBoundary } from "./error-boundary";
 import { ParticipantTile } from "./participant-tile";
 import { cn } from "@/lib/utils";
+import { isSessionFinalized } from "@/utils/interview-utils";
 
 interface InterviewClientProps {
   roomId: string;
@@ -75,19 +78,30 @@ export function InterviewClient({ roomId, username, isInterviewer = false, isRea
   const [error, setError] = useState<string | null>(null);
   const [problemStatement, setProblemStatement] = useState<any>(null);
   const [isEnding, startEndingTransition] = useTransition();
+  const [isProcessingFeedback, setIsProcessingFeedback] = useState(false);
+  const [evaluationStep, setEvaluationStep] = useState(0);
   const router = useRouter();
 
   // Fetch Token & Problem Details
   useEffect(() => {
-    const fetchToken = async () => {
+    const fetchToken = async (retryCount = 0) => {
       try {
         const res = await fetch(`/api/livekit?room=${roomId}&username=${username}`);
         const data = await res.json();
         if (!res.ok) {
-          throw new Error(data.error || "Failed to fetch token");
+          const errMsg = data.error || `Failed to fetch token (HTTP ${res.status})`;
+          // Retry on 500 errors (transient server issues) up to 2 times
+          if (res.status >= 500 && retryCount < 2) {
+            console.warn(`[LiveKit Token] Retrying token fetch (attempt ${retryCount + 2})...`);
+            await new Promise(resolve => setTimeout(resolve, 1000 * (retryCount + 1)));
+            return fetchToken(retryCount + 1);
+          }
+          throw new Error(errMsg);
         }
+        console.log("[LiveKit Token] Token received successfully");
         setToken(data.token);
       } catch (err: any) {
+        console.error("[LiveKit Token] Token fetch failed:", err.message);
         setError(err.message);
       }
     };
@@ -110,31 +124,77 @@ export function InterviewClient({ roomId, username, isInterviewer = false, isRea
   }, [roomId, username]);
 
   const handleEndInterview = async () => {
+    if (isProcessingFeedback || isEnding) return;
     if (!confirm("Are you sure you want to end this interview and generate the AI feedback report? This will complete the session for both participants.")) return;
 
+    setIsProcessingFeedback(true);
+    setEvaluationStep(0);
+
+    // Dynamic simulated steps interval (2.5 seconds per step, up to 5 steps, 6th step is done)
+    const stepInterval = setInterval(() => {
+      setEvaluationStep((prev) => {
+        if (prev < 5) return prev + 1;
+        clearInterval(stepInterval);
+        return prev;
+      });
+    }, 2500);
+
     startEndingTransition(async () => {
-      const res = await endInterviewAndGenerateReport(roomId);
-      if (res.error) {
-        toast.error(res.error);
-      } else {
-        toast.success("Interview completed! AI Report successfully generated and saved.");
-        router.push(isInterviewer ? "/dashboard/interviewer" : "/dashboard/candidate");
+      try {
+        const res = await endInterviewAndGenerateReport(roomId);
+        clearInterval(stepInterval);
+        if (res.error) {
+          toast.error(res.error);
+          setIsProcessingFeedback(false);
+        } else {
+          toast.success("Interview completed! AI Report successfully generated and saved.");
+          router.push(isInterviewer ? "/dashboard/interviewer" : "/dashboard/candidate");
+        }
+      } catch (err: any) {
+        clearInterval(stepInterval);
+        toast.error(err.message || "An unexpected error occurred.");
+        setIsProcessingFeedback(false);
       }
     });
   };
 
   if (error) {
     return (
-      <div className="flex h-full flex-col items-center justify-center space-y-4">
-        <div className="text-red-500 font-semibold bg-red-500/10 p-4 rounded-lg border border-red-500/20">
-          Failed to join room: {error}
+      <div className="flex h-full flex-col items-center justify-center space-y-4 bg-zinc-950 p-6">
+        <div className="max-w-lg w-full text-center space-y-4">
+          <div className="text-red-500 font-semibold bg-red-500/10 p-4 rounded-lg border border-red-500/20 text-sm">
+            {error}
+          </div>
+          <div className="flex items-center justify-center gap-3">
+            <button 
+              onClick={() => {
+                setError(null);
+                setToken("");
+                // Re-trigger token fetch
+                const fetchToken = async () => {
+                  try {
+                    const res = await fetch(`/api/livekit?room=${roomId}&username=${username}`);
+                    const data = await res.json();
+                    if (!res.ok) throw new Error(data.error || "Failed to fetch token");
+                    setToken(data.token);
+                  } catch (err: any) {
+                    setError(err.message);
+                  }
+                };
+                fetchToken();
+              }}
+              className="px-4 py-2 bg-primary text-primary-foreground rounded-md hover:bg-primary/90 transition cursor-pointer font-semibold text-sm"
+            >
+              Retry Connection
+            </button>
+            <button 
+              onClick={() => router.push('/dashboard')}
+              className="px-4 py-2 bg-zinc-800 text-zinc-300 rounded-md hover:bg-zinc-700 transition cursor-pointer text-sm"
+            >
+              Return to Dashboard
+            </button>
+          </div>
         </div>
-        <button 
-          onClick={() => router.push('/dashboard')}
-          className="px-4 py-2 bg-primary text-primary-foreground rounded-md hover:bg-primary/90 transition cursor-pointer"
-        >
-          Return to Dashboard
-        </button>
       </div>
     );
   }
@@ -180,17 +240,26 @@ export function InterviewClient({ roomId, username, isInterviewer = false, isRea
         </div>
       ) : (
         <LiveKitRoom
-          video={true}
-          audio={true}
+          video={!isReadOnlyReview}
+          audio={!isReadOnlyReview}
           token={token}
           serverUrl={process.env.NEXT_PUBLIC_LIVEKIT_URL}
           className="h-full w-full flex flex-col overflow-hidden"
+          connectOptions={{
+            autoSubscribe: true,
+          }}
           onDisconnected={() => {
             router.push("/dashboard");
           }}
           onError={(err) => {
             console.error("[LiveKit Room Error]", err);
-            setError(err.message || "Failed to establish a room connection");
+            const msg = err.message || "Failed to establish a room connection";
+            // Provide clearer guidance for "invalid token" errors
+            if (msg.toLowerCase().includes("invalid token")) {
+              setError("LiveKit connection failed: Invalid token. This usually means the LiveKit API credentials have expired or been rotated. Please contact your administrator to verify the LiveKit Cloud project settings.");
+            } else {
+              setError(msg);
+            }
           }}
         >
           <LiveKitErrorBoundary>
@@ -203,23 +272,87 @@ export function InterviewClient({ roomId, username, isInterviewer = false, isRea
               setProblemStatement={setProblemStatement}
               handleEndInterview={handleEndInterview}
               isEnding={isEnding}
+              isProcessingFeedback={isProcessingFeedback}
             />
           </LiveKitErrorBoundary>
         </LiveKitRoom>
       )}
       
-      {isEnding && (
-        <div className="fixed inset-0 bg-black/80 backdrop-blur-md z-50 flex flex-col items-center justify-center space-y-4">
-          <div className="relative">
-            <div className="w-16 h-16 rounded-full border-4 border-primary/20 border-t-primary animate-spin" />
-            <Sparkles className="w-6 h-6 text-primary absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 animate-pulse" />
+      {(isEnding || isProcessingFeedback) && (() => {
+        const evaluationSteps = [
+          "Establishing secure connection to evaluation engine...",
+          "Retrieving candidate's collaborative code submissions...",
+          "Analyzing computational time and space complexity...",
+          "Evaluating code style, patterns, and language conventions...",
+          "Generating structural review and AI feedback summary...",
+          "Hardening report and syncing changes to database..."
+        ];
+        const progressPercent = Math.min(((evaluationStep + 1) / evaluationSteps.length) * 100, 100);
+        return (
+          <div className="fixed inset-0 bg-black/85 backdrop-blur-lg z-50 flex flex-col items-center justify-center p-6 select-none animate-in fade-in duration-300">
+            <div className="max-w-md w-full bg-zinc-900/90 border border-zinc-800/80 p-8 rounded-2xl shadow-2xl relative overflow-hidden flex flex-col items-center text-center">
+              {/* Elegant glowing background element */}
+              <div className="absolute top-0 left-1/2 -translate-x-1/2 w-64 h-64 bg-primary/10 rounded-full blur-[80px] pointer-events-none mix-blend-screen animate-pulse" />
+              
+              {/* Spinning icon & sparkles */}
+              <div className="relative mb-6">
+                <div className="w-20 h-20 rounded-full border-4 border-zinc-800 border-t-primary animate-spin" />
+                <Sparkles className="w-8 h-8 text-primary absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 animate-pulse" />
+              </div>
+
+              {/* Title */}
+              <h2 className="text-lg font-bold text-white tracking-wide mb-1 uppercase">AI Evaluation Engines Active</h2>
+              <p className="text-zinc-400 text-xs mb-8 leading-relaxed max-w-xs">
+                Synthesizing collaborative submissions and calculating technical, structural, and communication metrics.
+              </p>
+
+              {/* Progress steps container */}
+              <div className="w-full space-y-4 mb-8 text-left">
+                {/* Stepped progress indicators */}
+                <div className="w-full bg-zinc-800/50 rounded-full h-1.5 overflow-hidden">
+                  <div 
+                    className="bg-gradient-to-r from-primary to-purple-650 h-full rounded-full transition-all duration-700 ease-out"
+                    style={{ width: `${progressPercent}%` }}
+                  />
+                </div>
+
+                {/* Steps timeline view */}
+                <div className="space-y-2.5">
+                  {evaluationSteps.map((stepMsg, idx) => {
+                    const isActive = idx === evaluationStep;
+                    const isDone = idx < evaluationStep;
+                    
+                    return (
+                      <div 
+                        key={idx} 
+                        className={cn(
+                          "flex items-center gap-3 text-[11px] transition-all duration-300",
+                          isActive ? "text-primary font-semibold translate-x-1" : isDone ? "text-zinc-500" : "text-zinc-700"
+                        )}
+                      >
+                        <div 
+                          className={cn(
+                            "w-4 h-4 rounded-full flex items-center justify-center border transition-all duration-300 text-[8px]",
+                            isActive ? "border-primary bg-primary/10 text-primary animate-pulse" : 
+                            isDone ? "border-emerald-500 bg-emerald-500/10 text-emerald-500 font-bold" : "border-zinc-800 text-transparent"
+                          )}
+                        >
+                          {isDone ? "✓" : isActive ? "●" : ""}
+                        </div>
+                        <span className="truncate flex-1">{stepMsg}</span>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+
+              <div className="text-[10px] text-zinc-500 font-medium animate-pulse">
+                Generating report... {Math.round(progressPercent)}% completed
+              </div>
+            </div>
           </div>
-          <h2 className="text-xl font-bold text-white tracking-wide">Analyzing Collaborative Submissions</h2>
-          <p className="text-zinc-400 text-xs max-w-xs text-center leading-relaxed">
-            InterviewAI evaluation engines are generating your structural code review and algorithmic feedback. Please wait...
-          </p>
-        </div>
-      )}
+        );
+      })()}
     </div>
   );
 }
@@ -234,6 +367,7 @@ interface InnerProps {
   setProblemStatement: (p: any) => void;
   handleEndInterview: () => void;
   isEnding: boolean;
+  isProcessingFeedback: boolean;
 }
 
 function InterviewRoomContent({
@@ -245,6 +379,7 @@ function InterviewRoomContent({
   setProblemStatement,
   handleEndInterview,
   isEnding,
+  isProcessingFeedback,
 }: InnerProps) {
   const router = useRouter();
   const { localParticipant } = useLocalParticipant();
@@ -317,6 +452,7 @@ function InterviewRoomContent({
   const [interviewMode, setInterviewMode] = useState<"assessment" | "live coding" | "hr">("assessment");
   const [warningsCount, setWarningsCount] = useState(0);
   const [isLocked, setIsLocked] = useState(isReadOnlyReview || false);
+  const [lockReason, setLockReason] = useState<string>("Your assessment session has been locked.");
   const [candidateRemarks, setCandidateRemarks] = useState("");
 
   // Lifecycle & Clock countdown states
@@ -346,6 +482,35 @@ function InterviewRoomContent({
   const [focusedCandidateIdentity, setFocusedCandidateIdentity] = useState<string | null>(null);
   const [isPinnedMode, setIsPinnedMode] = useState<boolean>(false);
   const [isFullscreenMonitor, setIsFullscreenMonitor] = useState<boolean>(false);
+
+  // Accurate participant presence engine (excludes stale reconnects and disconnected ghosts)
+  const getActiveUniqueParticipantsCount = useCallback(() => {
+    const activeIdentities = new Set<string>();
+    
+    if (localParticipant?.identity) {
+      activeIdentities.add(localParticipant.identity);
+    }
+    
+    participants.forEach((p) => {
+      if (p.identity) {
+        activeIdentities.add(p.identity);
+      }
+    });
+    
+    return activeIdentities.size;
+  }, [localParticipant, participants]);
+
+  // Format seconds to HH:MM:SS for production-grade telemetry timer display
+  const formatHHMMSS = useCallback((totalSeconds: number) => {
+    const hours = Math.floor(totalSeconds / 3600);
+    const minutes = Math.floor((totalSeconds % 3600) / 60);
+    const seconds = totalSeconds % 60;
+    return [
+      String(hours).padStart(2, "0"),
+      String(minutes).padStart(2, "0"),
+      String(seconds).padStart(2, "0")
+    ].join(":");
+  }, []);
   
   // Track mute / media states
   const [isMicEnabled, setIsMicEnabled] = useState(localParticipant.isMicrophoneEnabled);
@@ -399,6 +564,31 @@ function InterviewRoomContent({
       localParticipant.off("localTrackUnpublished", handleUpdate);
     };
   }, [localParticipant]);
+
+  // Strict global keyboard event blocker when session is locked
+  useEffect(() => {
+    if (!isLocked || isLocalModerator) return;
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      const activeEl = document.activeElement;
+      const isChatInput = activeEl && 
+        (activeEl.tagName === "INPUT" || activeEl.tagName === "TEXTAREA") && 
+        activeEl.id === "chat-input";
+        
+      if (isChatInput) {
+        return; // Allow typing in the chat
+      }
+
+      // Block all other keyboard shortcuts and inputs in coding workspace
+      e.preventDefault();
+      e.stopPropagation();
+    };
+
+    window.addEventListener("keydown", handleKeyDown, true);
+    return () => {
+      window.removeEventListener("keydown", handleKeyDown, true);
+    };
+  }, [isLocked, isLocalModerator]);
 
   // 1. Delayed Safe Handshake Polling and Role Validation Wait State
   useEffect(() => {
@@ -916,7 +1106,16 @@ function InterviewRoomContent({
           return;
         }
         setIsLocked(true);
+        setLockReason(data.reason || "Locked by moderator");
         toast.error("Your assessment session has been locked.");
+      } else if (data.type === "UNLOCK_SESSION") {
+        // Enforce candidate identity filtering
+        if (data.candidateIdentity && data.candidateIdentity !== localParticipant.identity) {
+          return;
+        }
+        setIsLocked(false);
+        setLockReason("");
+        toast.success("Your assessment session has been unlocked. You may resume your work.");
       } else if (data.type === "SUBMISSION_FINALIZED") {
         setIsLocked(true);
         toast.success("Candidate finalized and submitted their assessment.");
@@ -1006,8 +1205,15 @@ function InterviewRoomContent({
         if (interviewData.session_status === "terminated" || 
             interviewData.session_status === "submitted" || 
             interviewData.session_status === "completed" ||
-            interviewData.session_status === "expired") {
+            interviewData.session_status === "expired" ||
+            interviewData.session_status === "missed" ||
+            interviewData.session_status === "cancelled" ||
+            interviewData.session_status === "canceled" ||
+            interviewData.is_locked) {
           setIsLocked(true);
+          if (interviewData.is_locked) {
+            setLockReason(interviewData.lock_reason || "Locked by moderator");
+          }
         }
 
         // Fetch duration_minutes from interview_sessions
@@ -1063,6 +1269,42 @@ function InterviewRoomContent({
     loadInterviewDetails();
   }, [roomId]);
 
+  // Double-safe automatic session initialization when candidate connects (or when candidate is in the room)
+  useEffect(() => {
+    if (actualStartedAt || isReadOnlyReview) return;
+    // FINALIZATION GUARD: Do NOT attempt to initialize if session is already finalized
+    if (isSessionFinalized(sessionStatus)) return;
+
+    const activeCandidates = participants.filter(isParticipantCandidate);
+    const isCandidatePresent = activeCandidates.length > 0 || !isLocalModerator;
+
+    if (isCandidatePresent) {
+      const triggerStart = async () => {
+        try {
+          console.log("[Lobby Sync] Candidate detected in room. Initializing authoritative session...");
+          const res = await initializeInterviewSession(roomId);
+          if (res.error) {
+            console.warn("[Lobby Sync] Session initialization check:", res.error);
+            // If the error is due to finalization, disconnect and redirect
+            if (res.error.includes("permanently finalized")) {
+              toast.error("This session has been permanently finalized.");
+              room.disconnect();
+              router.push("/dashboard");
+            }
+          } else if (res.interview) {
+            console.log("[Lobby Sync] Authoritative session successfully started!");
+            setSessionStatus(res.interview.session_status || "active");
+            setActualStartedAt(res.interview.actual_started_at);
+            setCandidateJoinedAt(res.interview.candidate_joined_at);
+          }
+        } catch (e) {
+          console.error("[Lobby Sync] Failed to trigger start:", e);
+        }
+      };
+      triggerStart();
+    }
+  }, [participants, isLocalModerator, actualStartedAt, isReadOnlyReview, roomId, isParticipantCandidate, sessionStatus]);
+
   // Enforce read-only review track state on connect
   useEffect(() => {
     if (isReadOnlyReview) {
@@ -1112,6 +1354,15 @@ function InterviewRoomContent({
             setTimeExtendedMinutes(updated.time_extended_minutes || 0);
           }
           
+          if (updated.is_locked !== undefined) {
+            setIsLocked(updated.is_locked);
+            if (updated.is_locked) {
+              setLockReason(updated.lock_reason || "Locked by moderator");
+            } else {
+              setLockReason("");
+            }
+          }
+
           if (updated.session_status === "terminated") {
             setIsLocked(true);
             toast.error("The interview session was forcefully terminated by the proctor.", {
@@ -1119,9 +1370,17 @@ function InterviewRoomContent({
             });
             room.disconnect();
             router.push("/dashboard");
-          } else if (updated.session_status === "submitted" || updated.session_status === "completed") {
+          } else if (
+            updated.session_status === "submitted" || 
+            updated.session_status === "completed" || 
+            updated.session_status === "expired" ||
+            updated.session_status === "missed" ||
+            updated.session_status === "cancelled" ||
+            updated.session_status === "canceled"
+          ) {
             setIsLocked(true);
-            toast.success("The assessment has been successfully submitted.", {
+            const statusUpper = updated.session_status.toUpperCase();
+            toast.success(`The assessment is finalized: ${statusUpper}`, {
               duration: 5000
             });
             room.disconnect();
@@ -1139,6 +1398,10 @@ function InterviewRoomContent({
   // Timer countdown ticking
   useEffect(() => {
     if (!actualStartedAt || isLocked) {
+      return;
+    }
+    // FINALIZATION GUARD: Don't run the timer if the session is already finalized
+    if (isSessionFinalized(sessionStatus)) {
       return;
     }
 
@@ -1164,6 +1427,23 @@ function InterviewRoomContent({
 
     return () => clearInterval(interval);
   }, [actualStartedAt, durationMinutes, timeExtendedMinutes, isLocked, isInterviewer]);
+
+  // Periodically persist remaining seconds in DB (every 15 seconds) for admin auditing and recovery
+  useEffect(() => {
+    if (!actualStartedAt || isLocked || isInterviewer || remainingSeconds === null) {
+      return;
+    }
+
+    const syncInterval = setInterval(async () => {
+      const supabase = createClient();
+      await supabase
+        .from("interviews")
+        .update({ remaining_seconds: remainingSeconds })
+        .eq("id", roomId);
+    }, 15000);
+
+    return () => clearInterval(syncInterval);
+  }, [actualStartedAt, isLocked, isInterviewer, remainingSeconds, roomId]);
 
   // Presence channel for typing notifications
   const { send: sendPresence } = useDataChannel("presence", (msg) => {
@@ -1193,7 +1473,11 @@ function InterviewRoomContent({
           message: "Candidate left the assessment tab!",
           timestamp: new Date().toISOString()
         });
-        sendPresence(new TextEncoder().encode(alertPayload), { reliable: true });
+        try {
+          sendPresence(new TextEncoder().encode(alertPayload), { reliable: true });
+        } catch (err) {
+          console.warn("Failed to broadcast visibility change telemetry over WebRTC:", err);
+        }
         toast.warning("WARNING: Please do not leave the assessment tab. Infractions are recorded!");
       }
     };
@@ -1216,7 +1500,11 @@ function InterviewRoomContent({
         message: "Candidate clicked outside the assessment window!",
         timestamp: new Date().toISOString()
       });
-      sendPresence(new TextEncoder().encode(alertPayload), { reliable: true });
+      try {
+        sendPresence(new TextEncoder().encode(alertPayload), { reliable: true });
+      } catch (err) {
+        console.warn("Failed to broadcast focus blur telemetry over WebRTC:", err);
+      }
       toast.warning("WARNING: Keep your focus inside the assessment window.");
     };
 
@@ -1239,7 +1527,11 @@ function InterviewRoomContent({
           message: "Candidate exited fullscreen focus!",
           timestamp: new Date().toISOString()
         });
-        sendPresence(new TextEncoder().encode(alertPayload), { reliable: true });
+        try {
+          sendPresence(new TextEncoder().encode(alertPayload), { reliable: true });
+        } catch (err) {
+          console.warn("Failed to broadcast fullscreen exit telemetry over WebRTC:", err);
+        }
         toast.warning("WARNING: Enforced fullscreen is active. Infractions are recorded.");
       }
     };
@@ -1598,58 +1890,135 @@ function InterviewRoomContent({
     <div className="flex-1 flex flex-col min-h-0 bg-zinc-950 relative">
       {/* Header bar */}
       <header className="h-14 shrink-0 flex items-center justify-between px-6 border-b border-zinc-800 bg-zinc-900/60 backdrop-blur-lg z-30 select-none">
-        <div className="flex items-center gap-4">
-          <div className="flex items-center gap-2">
-            <span className="relative flex h-2 w-2">
-              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75"></span>
-              <span className="relative inline-flex rounded-full h-2 w-2 bg-red-500"></span>
-            </span>
-            <span className="text-[10px] font-bold tracking-wider text-red-500 uppercase flex items-center gap-1.5">
-              <Radio className="w-3.5 h-3.5" /> LIVE
-            </span>
-          </div>
+        <div className="flex items-center gap-3">
+          {/* Lobby State Machine Badge */}
+          {(() => {
+            const activeCandidates = participants.filter(isParticipantCandidate);
+            const isCandidatePresent = activeCandidates.length > 0 || !isLocalModerator;
+
+            if (sessionStatus === "completed" || sessionStatus === "submitted") {
+              return (
+                <span className="px-2.5 py-1 text-[10px] font-extrabold tracking-wider uppercase border rounded-lg flex items-center gap-1.5 bg-indigo-500/10 text-indigo-400 border-indigo-500/20">
+                  <span className="w-1.5 h-1.5 rounded-full bg-indigo-500" />
+                  Assessment Finalized
+                </span>
+              );
+            }
+            if (sessionStatus === "terminated") {
+              return (
+                <span className="px-2.5 py-1 text-[10px] font-extrabold tracking-wider uppercase border rounded-lg flex items-center gap-1.5 bg-red-500/10 text-red-400 border-red-500/20">
+                  <span className="w-1.5 h-1.5 rounded-full bg-red-500" />
+                  Terminated
+                </span>
+              );
+            }
+            if (sessionStatus === "expired") {
+              return (
+                <span className="px-2.5 py-1 text-[10px] font-extrabold tracking-wider uppercase border rounded-lg flex items-center gap-1.5 bg-red-500/10 text-red-400 border-red-500/20">
+                  <span className="w-1.5 h-1.5 rounded-full bg-red-500" />
+                  Expired
+                </span>
+              );
+            }
+
+            if (actualStartedAt || isCandidatePresent) {
+              return (
+                <span className="px-2.5 py-1 text-[10px] font-extrabold tracking-wider uppercase border rounded-lg flex items-center gap-1.5 bg-emerald-500/10 text-emerald-450 border-emerald-500/25 shadow-[0_0_12px_rgba(16,185,129,0.05)]">
+                  <span className="relative flex h-1.5 w-1.5">
+                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-450 opacity-75"></span>
+                    <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-red-500"></span>
+                  </span>
+                  Interview Active
+                </span>
+              );
+            }
+
+            // Only show Waiting state for moderators - candidates never see this
+            if (isLocalModerator) {
+              return (
+                <span className="px-2.5 py-1 text-[10px] font-extrabold tracking-wider uppercase border rounded-lg flex items-center gap-1.5 bg-amber-500/10 text-amber-450 border-amber-500/20 animate-pulse">
+                  <span className="relative flex h-1.5 w-1.5">
+                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-450 opacity-75"></span>
+                    <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-amber-500"></span>
+                  </span>
+                  Waiting for Candidate
+                </span>
+              );
+            }
+
+            // Candidate sees a connecting/ready state instead
+            return (
+              <span className="px-2.5 py-1 text-[10px] font-extrabold tracking-wider uppercase border rounded-lg flex items-center gap-1.5 bg-blue-500/10 text-blue-400 border-blue-500/20">
+                <span className="relative flex h-1.5 w-1.5">
+                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-blue-450 opacity-75"></span>
+                  <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-blue-500"></span>
+                </span>
+                Session Ready
+              </span>
+            );
+          })()}
+
           <div className="h-4 w-px bg-zinc-800" />
           <h2 className="text-xs font-semibold text-zinc-300">
-            Interview Session: <span className="font-mono text-primary font-bold">{roomId}</span>
+            Session ID: <span className="font-mono text-primary font-bold">{roomId}</span>
           </h2>
-          {actualStartedAt && remainingSeconds !== null && (
+
+          {/* Animated Authoritative Live Timer */}
+          {actualStartedAt && remainingSeconds !== null ? (
             <span className={cn(
-              "ml-3 px-2.5 py-1 rounded-md text-[11px] font-bold tracking-wider font-mono flex items-center gap-1.5 border backdrop-blur-md transition-all duration-300",
+              "ml-3 px-2.5 py-1 rounded-lg text-[11px] font-extrabold tracking-wider font-mono flex items-center gap-1.5 border backdrop-blur-md transition-all duration-300",
               remainingSeconds <= 300 
                 ? "bg-red-500/15 text-red-400 border-red-500/30 animate-pulse shadow-[0_0_15px_rgba(239,68,68,0.15)]" 
-                : "bg-zinc-800/40 text-emerald-400 border-zinc-700/50"
+                : "bg-zinc-850 text-emerald-400 border-zinc-700/50"
             )}>
               <Timer className="w-3.5 h-3.5" />
-              Time Remaining: {Math.floor(remainingSeconds / 60)}:{String(remainingSeconds % 60).padStart(2, "0")}
+              {formatHHMMSS(remainingSeconds)}
             </span>
-          )}
-          {!actualStartedAt && (
-            <span className="ml-3 px-2.5 py-1 rounded-md text-[11px] font-bold tracking-wider font-mono bg-zinc-800/40 text-zinc-400 border border-zinc-700/50 flex items-center gap-1.5">
-              <Hourglass className="w-3.5 h-3.5 animate-spin" />
-              Awaiting Candidate Entry...
-            </span>
+          ) : (
+            isLocalModerator && (
+              <span className="ml-3 px-2.5 py-1 rounded-lg text-[11px] font-extrabold tracking-wider font-mono bg-zinc-850 text-zinc-450 border border-zinc-700/30 flex items-center gap-1.5">
+                <Hourglass className="w-3.5 h-3.5 animate-pulse text-amber-500/60" />
+                Timer: Awaiting Join
+              </span>
+            )
           )}
         </div>
         
         <div className="flex items-center gap-3">
-          <div className="hidden sm:flex items-center gap-1.5 px-3 py-1 bg-zinc-850 border border-zinc-800 rounded-lg">
-            <Users className="w-3.5 h-3.5 text-zinc-400" />
-            <span className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider">
-              {participants.length + 1} Present
-            </span>
-          </div>
+          {/* Active Participant Count Badge */}
+          {(() => {
+            const activeCandidates = participants.filter(isParticipantCandidate);
+            const isCandidatePresent = activeCandidates.length > 0 || !isLocalModerator;
+            return (
+              <div className={cn(
+                "hidden sm:flex items-center gap-1.5 px-3 py-1 border rounded-lg transition-all duration-300 bg-zinc-850",
+                isCandidatePresent 
+                  ? "border-emerald-500/20 bg-emerald-500/5 text-emerald-400" 
+                  : "border-zinc-800 text-zinc-450"
+              )}>
+                <Users className="w-3.5 h-3.5 text-zinc-400" />
+                <span className="text-[10px] font-bold uppercase tracking-wider">
+                  {getActiveUniqueParticipantsCount()} Present
+                </span>
+                <span className={cn(
+                  "w-1.5 h-1.5 rounded-full inline-block",
+                  isCandidatePresent ? "bg-emerald-450 shadow-[0_0_8px_#34d399]" : "bg-zinc-600"
+                )} />
+              </div>
+            );
+          })()}
           
           {isLocalModerator ? (
             <Button 
               onClick={handleEndInterview}
-              disabled={isEnding}
+              disabled={isEnding || isProcessingFeedback}
               variant="destructive"
               className="bg-red-650 hover:bg-red-600 border border-red-700/30 text-white font-bold tracking-wide shadow-lg shadow-red-955/20 text-[10px] uppercase px-4 h-9 cursor-pointer transition-all duration-300"
             >
-              {isEnding ? (
+              {isEnding || isProcessingFeedback ? (
                 <>
                   <Loader2 className="w-3 h-3 mr-1.5 animate-spin" />
-                  Generating report...
+                  Generating...
                 </>
               ) : (
                 "End Interview"
@@ -2500,19 +2869,65 @@ function InterviewRoomContent({
                   </Button>
                   <Button
                     onClick={async () => {
-                      if (confirm("Are you sure you want to force-lock this candidate's assessment environment?")) {
+                      if (isLocked) {
+                        if (confirm("Are you sure you want to unlock this candidate's assessment environment?")) {
+                          setIsLocked(false);
+                          setLockReason("");
+                          
+                          // 1. Call server action for database persistence
+                          const res = await toggleLockSessionAction(roomId, false);
+                          if (res.error) {
+                            toast.error(`Failed to unlock session: ${res.error}`);
+                            return;
+                          }
+                          
+                          // 2. Broadcast LiveKit message for instant sync
+                          const unlockPayload = JSON.stringify({ type: "UNLOCK_SESSION" });
+                          sendControl(new TextEncoder().encode(unlockPayload), { reliable: true });
+                          toast.success("Candidate environment unlocked!");
+                        }
+                      } else {
+                        const reason = prompt("Enter lock reason (optional):", "Suspected proctoring violation");
+                        if (reason === null) return; // Moderator cancelled
+                        
                         setIsLocked(true);
-                        const lockPayload = JSON.stringify({ type: "LOCK_SESSION" });
+                        setLockReason(reason || "Locked by moderator");
+                        
+                        // 1. Call server action for database persistence
+                        const res = await toggleLockSessionAction(roomId, true, reason);
+                        if (res.error) {
+                          toast.error(`Failed to lock session: ${res.error}`);
+                          return;
+                        }
+                        
+                        // 2. Broadcast LiveKit message for instant sync
+                        const lockPayload = JSON.stringify({ 
+                          type: "LOCK_SESSION", 
+                          reason: reason || "Locked by moderator" 
+                        });
                         sendControl(new TextEncoder().encode(lockPayload), { reliable: true });
-                        await logTelemetry("submission", { reason: "Force locked by interviewer" });
                         toast.success("Candidate environment locked!");
                       }
                     }}
-                    disabled={isLocked}
                     variant="outline"
-                    className="h-8.5 text-[10px] font-bold uppercase bg-red-500/10 border border-red-500/20 text-red-400 hover:bg-red-500/20 cursor-pointer rounded-xl transition duration-300"
+                    className={cn(
+                      "h-8.5 text-[10px] font-bold uppercase cursor-pointer rounded-xl transition duration-300 flex items-center justify-center gap-1 w-full",
+                      isLocked
+                        ? "bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 hover:bg-emerald-500/20 animate-pulse"
+                        : "bg-red-500/10 border border-red-500/20 text-red-400 hover:bg-red-500/20"
+                    )}
                   >
-                    Lock Session
+                    {isLocked ? (
+                      <>
+                        <Unlock className="w-3 h-3" />
+                        Unlock Session
+                      </>
+                    ) : (
+                      <>
+                        <Lock className="w-3 h-3" />
+                        Lock Session
+                      </>
+                    )}
                   </Button>
                 </div>
 
@@ -2681,6 +3096,7 @@ function InterviewRoomContent({
                     <form onSubmit={handleSendMessage} className="p-3 border-t border-zinc-800 bg-zinc-900 shrink-0">
                       <div className="flex items-center gap-2 bg-zinc-950 border border-zinc-800 rounded-xl px-2.5 py-1.5 focus-within:border-primary transition duration-300">
                         <input 
+                          id="chat-input"
                           type="text"
                           value={messageInput}
                           onChange={handleInputChange}
@@ -2784,7 +3200,46 @@ function InterviewRoomContent({
             </aside>
 
             {/* CENTER WORKSPACE: Collaborative Coding Workspace & problem specs */}
-            <main className="flex-1 min-w-0 bg-zinc-950 flex flex-col h-full overflow-hidden">
+            <main className="flex-1 min-w-0 bg-zinc-950 flex flex-col h-full overflow-hidden relative">
+              {/* Fullscreen Blurred Dark Glassmorphism Lockout Screen over the workspace */}
+              {isLocked && !isLocalModerator && (
+                <div className="absolute inset-0 bg-zinc-950/85 backdrop-blur-xl z-30 flex flex-col items-center justify-center space-y-6 p-6 select-none animate-fade-in">
+                  <div className="w-20 h-20 rounded-2xl bg-amber-500/10 border border-amber-500/20 flex items-center justify-center animate-pulse shadow-[0_0_50px_rgba(245,158,11,0.25)]">
+                    <Lock className="w-10 h-10 text-amber-500" />
+                  </div>
+                  
+                  <div className="text-center max-w-md space-y-3">
+                    <h2 className="text-3xl font-extrabold text-white tracking-tight">SESSION LOCKED</h2>
+                    <p className="text-zinc-400 text-sm leading-relaxed">
+                      Your assessment has been temporarily paused by the moderator.<br />
+                      Please wait for further instructions.
+                    </p>
+                    
+                    {lockReason && (
+                      <div className="mt-4 p-4 bg-zinc-900/50 border border-zinc-800 rounded-xl text-left max-w-xs mx-auto">
+                        <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider block mb-1">Moderator Notice:</span>
+                        <p className="text-xs text-zinc-300 italic font-medium">"{lockReason}"</p>
+                      </div>
+                    )}
+                    
+                    <div className="bg-zinc-900/50 border border-zinc-800 rounded-xl p-4 text-left font-mono text-xs text-zinc-500 space-y-1.5 mt-2">
+                      <div className="flex justify-between border-b border-zinc-850 pb-1.5 mb-1.5">
+                        <span>Session ID:</span>
+                        <span className="text-zinc-300 select-all">{roomId}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span>Warnings Issued:</span>
+                        <span className="text-amber-400 font-bold">{warningsCount} / 3</span>
+                      </div>
+                    </div>
+                  </div>
+                  
+                  <div className="text-[10px] text-zinc-500 font-semibold tracking-wider uppercase animate-pulse">
+                    Microphone & Camera Remain Active
+                  </div>
+                </div>
+              )}
+
               <Tabs value={activeWorkspaceTab} onValueChange={setActiveWorkspaceTab} className="h-full flex flex-col min-h-0">
                 <div className="h-12 shrink-0 bg-zinc-900 border-b border-zinc-800 px-4 flex items-center justify-between select-none">
                   <TabsList className="bg-zinc-950/60 border border-zinc-800/80 rounded-lg p-0.5">
@@ -3097,8 +3552,14 @@ function InterviewRoomContent({
         </div>
       </div>
 
-      {/* Fullscreen Blurred Dark Glassmorphism Lockout Screen */}
-      {isLocked && !isInterviewer && (
+      {/* Fullscreen Blurred Dark Glassmorphism Lockout Screen (Permanent End of Session) */}
+      {(sessionStatus === "terminated" || 
+        sessionStatus === "submitted" || 
+        sessionStatus === "completed" || 
+        sessionStatus === "expired" ||
+        sessionStatus === "missed" ||
+        sessionStatus === "cancelled" ||
+        sessionStatus === "canceled") && !isLocalModerator && (
         <div className="fixed inset-0 bg-zinc-950/80 backdrop-blur-xl z-50 flex flex-col items-center justify-center space-y-6 p-6 animate-fade-in select-none">
           <div className="w-20 h-20 rounded-2xl bg-red-500/10 border border-red-500/20 flex items-center justify-center animate-pulse shadow-[0_0_50px_rgba(239,68,68,0.25)]">
             <X className="w-10 h-10 text-red-500" />
