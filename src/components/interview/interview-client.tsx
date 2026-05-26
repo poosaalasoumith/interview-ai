@@ -1391,41 +1391,37 @@ function InterviewRoomContent({
     loadInterviewDetails();
   }, [roomId]);
 
-  // Double-safe automatic session initialization when candidate connects (or when candidate is in the room)
+  // Candidate-Authoritative session initialization strictly upon LiveKit connection
   useEffect(() => {
-    if (actualStartedAt || isReadOnlyReview) return;
+    if (isLocalModerator || actualStartedAt || isReadOnlyReview || room.state !== "connected") return;
     // FINALIZATION GUARD: Do NOT attempt to initialize if session is already finalized
     if (isSessionFinalized(sessionStatus)) return;
 
-    const activeCandidates = participants.filter(isParticipantCandidate);
-    const isCandidatePresent = activeCandidates.length > 0 || !isLocalModerator;
-
-    if (isCandidatePresent) {
-      const triggerStart = async () => {
-        try {
-          console.log("[Lobby Sync] Candidate detected in room. Initializing authoritative session...");
-          const res = await initializeInterviewSession(roomId);
-          if (res.error) {
-            console.warn("[Lobby Sync] Session initialization check:", res.error);
-            // If the error is due to finalization, disconnect and redirect
-            if (res.error.includes("permanently finalized")) {
-              toast.error("This session has been permanently finalized.");
-              room.disconnect();
-              router.push("/dashboard");
-            }
-          } else if (res.interview) {
-            console.log("[Lobby Sync] Authoritative session successfully started!");
-            setSessionStatus(res.interview.session_status || "active");
-            setActualStartedAt(res.interview.actual_started_at);
-            setCandidateJoinedAt(res.interview.candidate_joined_at);
+    const triggerStart = async () => {
+      try {
+        console.log("[Lobby Sync] Candidate connection established. Initializing authoritative session...");
+        const res = await initializeInterviewSession(roomId);
+        if (res.error) {
+          console.warn("[Lobby Sync] Session initialization check:", res.error);
+          // If the error is due to finalization, disconnect and redirect
+          if (res.error.includes("permanently finalized")) {
+            toast.error("This session has been permanently finalized.");
+            room.disconnect();
+            router.push("/dashboard");
           }
-        } catch (e) {
-          console.error("[Lobby Sync] Failed to trigger start:", e);
+        } else if (res.interview) {
+          console.log("[Lobby Sync] Authoritative session successfully started by candidate!");
+          setSessionStatus(res.interview.session_status || "active");
+          setActualStartedAt(res.interview.actual_started_at);
+          setCandidateJoinedAt(res.interview.candidate_joined_at);
         }
-      };
-      triggerStart();
-    }
-  }, [participants, isLocalModerator, actualStartedAt, isReadOnlyReview, roomId, isParticipantCandidate, sessionStatus]);
+      } catch (e) {
+        console.error("[Lobby Sync] Failed to trigger start:", e);
+      }
+    };
+
+    triggerStart();
+  }, [room.state, isLocalModerator, actualStartedAt, isReadOnlyReview, roomId, sessionStatus]);
 
   // Enforce read-only review track state on connect
   useEffect(() => {
@@ -3814,6 +3810,39 @@ function InterviewRoomContent({
           </button>
         </div>
       </div>
+
+      {/* Moderator Early Entry Waiting Screen */}
+      {isLocalModerator && !actualStartedAt && (
+        <div className="fixed inset-0 bg-zinc-950/90 backdrop-blur-2xl z-50 flex flex-col items-center justify-center p-6 select-none animate-fade-in text-center">
+          <div className="max-w-md space-y-6">
+            <div className="relative w-24 h-24 mx-auto flex items-center justify-center">
+              {/* Pulsing Radar Rings */}
+              <div className="absolute inset-0 rounded-full bg-indigo-500/5 border border-indigo-500/20 animate-ping opacity-75" />
+              <div className="absolute -inset-4 rounded-full bg-indigo-500/5 border border-indigo-500/10 animate-pulse" />
+              <div className="relative w-16 h-16 rounded-2xl bg-indigo-500/10 border border-indigo-500/20 flex items-center justify-center shadow-[0_0_30px_rgba(99,102,241,0.2)]">
+                <Users className="w-8 h-8 text-indigo-400 animate-pulse" />
+              </div>
+            </div>
+            <div className="space-y-2">
+              <h2 className="text-2xl font-extrabold text-white tracking-tight">Waiting for Candidate Entry...</h2>
+              <p className="text-zinc-400 text-sm leading-relaxed max-w-sm mx-auto">
+                The interview environment and countdown timer will activate automatically the moment the candidate connects to the room.
+              </p>
+            </div>
+            
+            <div className="bg-zinc-900/60 border border-zinc-800 rounded-xl p-4 text-left font-mono text-[10px] text-zinc-500 space-y-2">
+              <div className="flex justify-between">
+                <span>Room Code:</span>
+                <span className="text-zinc-300 font-bold">{roomId}</span>
+              </div>
+              <div className="flex justify-between">
+                <span>Lobby Status:</span>
+                <span className="text-amber-400 font-bold animate-pulse">Awaiting Candidate Connection</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Fullscreen Enforced Lockout Overlay (Glassmorphism) */}
       {interviewMode === "assessment" && !isInterviewer && !isReadOnlyReview && !isLocked && !isFullscreenActive && (

@@ -928,7 +928,20 @@ export async function initializeInterviewSession(roomId: string) {
     return { error: "This interview session has been permanently finalized and cannot be restarted." };
   }
 
-  // Only allow candidate or interviewer to initialize (in this case, candidate enters first)
+  // Fetch the user's role to determine if they are the candidate
+  const { data: profile } = await supabase
+    .from("users")
+    .select("role")
+    .eq("id", user.id)
+    .single();
+
+  const isUserCandidate = profile?.role === "candidate";
+
+  // Only allow candidate to initialize the countdown for the first time
+  if (!interview.actual_started_at && !isUserCandidate) {
+    return { error: "Moderators are not authorized to initialize the assessment countdown timer." };
+  }
+
   // If actual_started_at is already set, do not override
   if (interview.actual_started_at) {
     return { success: true, interview };
