@@ -1064,7 +1064,7 @@ function InterviewRoomContent({
   };
 
   // Realtime Control Data Channel (for warnings and locks)
-  const { send: sendControl } = useDataChannel("control-sync", (msg) => {
+  const { send: rawSendControl } = useDataChannel("control-sync", (msg) => {
     const payload = new TextDecoder().decode(msg.payload);
     try {
       const data = JSON.parse(payload);
@@ -1136,6 +1136,18 @@ function InterviewRoomContent({
       }
     } catch (e) {}
   });
+
+  const sendControl = async (data: Uint8Array, options?: any) => {
+    if (room && room.state === "connected" && localParticipant) {
+      try {
+        await rawSendControl(data, options);
+      } catch (err) {
+        console.warn("[WebRTC Control] Failed to send control message:", err);
+      }
+    } else {
+      console.log("[WebRTC Control] Skipped rawSendControl: room not connected.");
+    }
+  };
 
   // Warning Issue Helper
   const issueWarning = async (reason: string, targetCandidate?: { identity: string; name: string }) => {
@@ -1446,7 +1458,7 @@ function InterviewRoomContent({
   }, [actualStartedAt, isLocked, isInterviewer, remainingSeconds, roomId]);
 
   // Presence channel for typing notifications
-  const { send: sendPresence } = useDataChannel("presence", (msg) => {
+  const { send: rawSendPresence } = useDataChannel("presence", (msg) => {
     const payload = new TextDecoder().decode(msg.payload);
     try {
       const data = JSON.parse(payload);
@@ -1457,6 +1469,18 @@ function InterviewRoomContent({
       }
     } catch (e) {}
   });
+
+  const sendPresence = async (data: Uint8Array, options?: any) => {
+    if (room && room.state === "connected" && localParticipant) {
+      try {
+        await rawSendPresence(data, options);
+      } catch (err) {
+        console.warn("[WebRTC Presence] Failed to send presence message:", err);
+      }
+    } else {
+      console.log("[WebRTC Presence] Skipped rawSendPresence: room not connected.");
+    }
+  };
 
   // Tab Switch Proctor
   useEffect(() => {
