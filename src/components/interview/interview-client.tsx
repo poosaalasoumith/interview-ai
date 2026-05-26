@@ -457,7 +457,7 @@ function InterviewRoomContent({
 
   // Proctoring stabilization states
   const [isFullscreenActive, setIsFullscreenActive] = useState(false);
-  const [candidateFocusStates, setCandidateFocusStates] = useState<Record<string, { isFocused: boolean; isFullscreen: boolean; timestamp: number }>>({});
+  const [candidateFocusStates, setCandidateFocusStates] = useState<Record<string, { isFocused: boolean; isFullscreen: boolean; isScreenSharing?: boolean; timestamp: number }>>({});
 
   // Lifecycle & Clock countdown states
   const [sessionStatus, setSessionStatus] = useState<string>("scheduled");
@@ -939,6 +939,7 @@ function InterviewRoomContent({
       type: "CANDIDATE_FOCUS_UPDATE",
       isFocused,
       isFullscreen,
+      isScreenSharing: localParticipant?.isScreenShareEnabled || isScreenSharing,
       identity: localParticipant.identity
     });
     try {
@@ -950,7 +951,7 @@ function InterviewRoomContent({
   };
 
   // Standardized automated infraction triggers
-  const triggerInfraction = async (type: "TAB_SWITCH" | "WINDOW_BLUR" | "FULLSCREEN_EXIT" | "SCREEN_SHARE_STOPPED" | "DEVTOOLS_SUSPECTED", message: string) => {
+  const triggerInfraction = async (type: "TAB_SWITCH" | "WINDOW_BLUR" | "FULLSCREEN_EXIT" | "SCREEN_SHARE_STOPPED" | "DEVTOOLS_SUSPECTED" | "MINIMIZED", message: string) => {
     if (isInterviewer || isReadOnlyReview || isLocked) return;
 
     // Guard against multiple rapid infractions (e.g. within 1.5 seconds)
@@ -988,9 +989,11 @@ function InterviewRoomContent({
     // Broadcast warning/infraction to interviewer
     const payload = JSON.stringify({
       type: "WARNING_ISSUED",
+      infractionType: type,
       count: nextCount,
       reason: message,
       candidateIdentity: localParticipant.identity,
+      candidateName: username || "Candidate",
       moderatorName: "System Proctor",
       timestamp
     });
@@ -1168,18 +1171,17 @@ function InterviewRoomContent({
         setInterviewMode(data.mode);
         toast.info(`Interviewer switched room mode to: ${data.mode.toUpperCase()}`);
       } else if (data.type === "WARNING_ISSUED") {
-        // Enforce candidate identity filtering
-        if (data.candidateIdentity && data.candidateIdentity !== localParticipant.identity) {
+        // Enforce candidate identity filtering ONLY for candidates
+        if (!isLocalModerator && data.candidateIdentity && data.candidateIdentity !== localParticipant.identity) {
           return;
         }
 
-        // Prevent duplicate warning event handling (bounds checking)
-        if (data.count <= warningsCount) return;
+        // Prevent duplicate warning event handling (bounds checking) for candidates
+        if (!isLocalModerator && data.count <= warningsCount) return;
 
-        setWarningsCount(data.count);
-
-        // Instantly display details on popup modal if not moderator
         if (!isLocalModerator) {
+          setWarningsCount(data.count);
+          // Instantly display details on popup modal if not moderator
           setActiveWarning({
             count: data.count,
             reason: data.reason,
@@ -1187,6 +1189,29 @@ function InterviewRoomContent({
             timestamp: data.timestamp || new Date().toISOString()
           });
           playWarningSound();
+        } else {
+          // If we are the moderator, append this infraction directly to the in-memory telemetry logs!
+          const newInfractionLog = {
+            id: `webrtc-${Date.now()}-${Math.random()}`,
+            interview_id: roomId,
+            event_type: data.infractionType || "warning_issued",
+            created_at: data.timestamp || new Date().toISOString(),
+            details: {
+              candidate: data.candidateIdentity,
+              user: data.candidateName || data.candidateIdentity,
+              role: "candidate",
+              reason: data.reason,
+              timestamp: data.timestamp || new Date().toISOString(),
+              severity: "high"
+            }
+          };
+          setTelemetryLogs(prev => {
+            // Avoid duplicates
+            if (prev.some(log => log.details?.timestamp === newInfractionLog.details.timestamp && log.event_type === newInfractionLog.event_type)) {
+              return prev;
+            }
+            return [...prev, newInfractionLog];
+          });
         }
 
         toast.warning(`WARNING ISSUED (${data.count}/3): ${data.reason}`);
@@ -1235,6 +1260,7 @@ function InterviewRoomContent({
           [data.identity]: {
             isFocused: data.isFocused,
             isFullscreen: data.isFullscreen,
+            isScreenSharing: data.isScreenSharing || false,
             timestamp: Date.now()
           }
         }));
@@ -1610,6 +1636,7 @@ function InterviewRoomContent({
           [data.identity]: {
             isFocused: data.isFocused,
             isFullscreen: data.isFullscreen,
+            isScreenSharing: data.isScreenSharing || false,
             timestamp: Date.now()
           }
         }));
@@ -1631,11 +1658,16 @@ function InterviewRoomContent({
 
   // Proctoring focus and tab switch tracking
   useEffect(() => {
-    if (interviewMode !== "assessment" || isInterviewer || isLocked || !actualStartedAt) return;
+    if (isInterviewer || isReadOnlyReview || isLocked || !actualStartedAt) return;
 
     const handleVisibilityChange = () => {
       if (document.hidden) {
-        triggerInfraction("TAB_SWITCH", "Candidate switched tabs or minimized the browser!");
+        const isMinimized = (window.outerWidth === 0 && window.outerHeight === 0) || !document.hasFocus();
+        const type = isMinimized ? "MINIMIZED" : "TAB_SWITCH";
+        const msg = isMinimized
+          ? "Candidate minimized the assessment browser window!"
+          : "Candidate switched tabs or minimized the browser!";
+        triggerInfraction(type, msg);
         broadcastFocusStatus(false, !!document.fullscreenElement);
       } else {
         broadcastFocusStatus(document.hasFocus(), !!document.fullscreenElement);
@@ -1663,7 +1695,7 @@ function InterviewRoomContent({
       window.removeEventListener("blur", handleBlur);
       window.removeEventListener("focus", handleFocus);
     };
-  }, [interviewMode, isInterviewer, isLocked, actualStartedAt, warningsCount]);
+  }, [isInterviewer, isReadOnlyReview, isLocked, actualStartedAt, warningsCount]);
 
   // Proctoring fullscreen change and pointer lock tracking
   useEffect(() => {
@@ -1673,7 +1705,7 @@ function InterviewRoomContent({
       const isCurrentlyFullscreen = !!document.fullscreenElement;
       setIsFullscreenActive(isCurrentlyFullscreen);
       
-      if (interviewMode === "assessment" && !isInterviewer && !isLocked && actualStartedAt) {
+      if (!isInterviewer && !isLocked && actualStartedAt) {
         if (!isCurrentlyFullscreen) {
           triggerInfraction("FULLSCREEN_EXIT", "Candidate exited fullscreen focus mode!");
         }
@@ -1695,11 +1727,11 @@ function InterviewRoomContent({
       document.removeEventListener("fullscreenchange", handleFullscreenChange);
       document.removeEventListener("pointerlockchange", handlePointerLockChange);
     };
-  }, [interviewMode, isInterviewer, isLocked, actualStartedAt, warningsCount]);
+  }, [isInterviewer, isLocked, actualStartedAt, warningsCount]);
 
   // Clipboard copy/paste block
   useEffect(() => {
-    if (interviewMode !== "assessment" || isInterviewer || isLocked) return;
+    if (isInterviewer || isReadOnlyReview || isLocked) return;
 
     const handleCopy = (e: ClipboardEvent) => {
       e.preventDefault();
@@ -1719,11 +1751,11 @@ function InterviewRoomContent({
       window.removeEventListener("copy", handleCopy);
       window.removeEventListener("paste", handlePaste);
     };
-  }, [interviewMode, isInterviewer, isLocked]);
+  }, [isInterviewer, isReadOnlyReview, isLocked]);
 
   // Inactivity / Idle Proctor (45 seconds)
   useEffect(() => {
-    if (interviewMode !== "assessment" || isInterviewer || isLocked) return;
+    if (isInterviewer || isReadOnlyReview || isLocked) return;
 
     let idleTimer: NodeJS.Timeout;
     const resetIdleTimer = () => {
@@ -1749,11 +1781,11 @@ function InterviewRoomContent({
       window.removeEventListener("mousemove", resetIdleTimer);
       window.removeEventListener("keypress", resetIdleTimer);
     };
-  }, [interviewMode, isInterviewer, isLocked]);
+  }, [isInterviewer, isReadOnlyReview, isLocked]);
 
   // Mute / Media infractions
   useEffect(() => {
-    if (interviewMode !== "assessment" || isInterviewer || isLocked) return;
+    if (isInterviewer || isReadOnlyReview || isLocked) return;
 
     const handleTrackMuted = (publication: any) => {
       if (publication.source === Track.Source.Camera) {
@@ -1789,6 +1821,21 @@ function InterviewRoomContent({
       if (publication.source === Track.Source.ScreenShare) {
         setIsScreenSharing(true);
         logTelemetry("SCREEN_SHARE_STARTED", { user: username });
+        
+        // Auto-maximize / enter fullscreen immersive exam mode
+        if (!isInterviewer) {
+          try {
+             if (document.documentElement.requestFullscreen) {
+               document.documentElement.requestFullscreen().then(() => {
+                 setIsFullscreenActive(true);
+               }).catch((e) => {
+                 console.warn("Auto-fullscreen publish failed:", e);
+               });
+             }
+          } catch (err) {
+            console.warn("Auto-fullscreen publish error:", err);
+          }
+        }
       }
     };
 
@@ -1796,7 +1843,7 @@ function InterviewRoomContent({
       if (publication.source === Track.Source.ScreenShare) {
         setIsScreenSharing(false);
         logTelemetry("SCREEN_SHARE_STOPPED", { user: username });
-        if (interviewMode === "assessment" && !isInterviewer && !isLocked && actualStartedAt) {
+        if (!isInterviewer && !isLocked && actualStartedAt) {
           triggerInfraction("SCREEN_SHARE_STOPPED", "Candidate stopped their screen share stream!");
         }
       }
@@ -1813,11 +1860,11 @@ function InterviewRoomContent({
       localParticipant.off("localTrackPublished", handleLocalTrackPublished);
       localParticipant.off("localTrackUnpublished", handleLocalTrackUnpublished);
     };
-  }, [localParticipant, interviewMode, isInterviewer, isLocked, actualStartedAt]);
+  }, [localParticipant, isInterviewer, isReadOnlyReview, isLocked, actualStartedAt]);
 
   // Devtools keyboard shortcuts and window resize detection
   useEffect(() => {
-    if (interviewMode !== "assessment" || isInterviewer || isLocked || !actualStartedAt) return;
+    if (isInterviewer || isReadOnlyReview || isLocked || !actualStartedAt) return;
 
     const handleKeyDown = (e: KeyboardEvent) => {
       // Devtools shortcuts: F12, Ctrl+Shift+I/J/C, Cmd+Opt+I
@@ -1856,11 +1903,11 @@ function InterviewRoomContent({
       window.removeEventListener("resize", handleResize);
       clearTimeout(resizeTimeout);
     };
-  }, [interviewMode, isInterviewer, isLocked, actualStartedAt, warningsCount]);
+  }, [isInterviewer, isReadOnlyReview, isLocked, actualStartedAt, warningsCount]);
 
   // Prevent accidental exits with beforeunload
   useEffect(() => {
-    if (interviewMode !== "assessment" || isInterviewer || isLocked || !actualStartedAt) return;
+    if (isInterviewer || isReadOnlyReview || isLocked || !actualStartedAt) return;
     
     const handleBeforeUnload = (e: BeforeUnloadEvent) => {
       e.preventDefault();
@@ -1870,7 +1917,7 @@ function InterviewRoomContent({
 
     window.addEventListener("beforeunload", handleBeforeUnload);
     return () => window.removeEventListener("beforeunload", handleBeforeUnload);
-  }, [interviewMode, isInterviewer, isLocked, actualStartedAt]);
+  }, [isInterviewer, isReadOnlyReview, isLocked, actualStartedAt]);
 
   // Handle Unread Message Badge Increments
   useEffect(() => {
@@ -1975,6 +2022,18 @@ function InterviewRoomContent({
     await localParticipant.setScreenShareEnabled(nextState);
     setIsScreenSharing(nextState);
     toast.success(nextState ? "Screen Share Started" : "Screen Share Stopped");
+
+    // Auto-maximize on candidate screenshare initiation
+    if (nextState && !isInterviewer) {
+      try {
+        if (document.documentElement.requestFullscreen) {
+          await document.documentElement.requestFullscreen();
+          setIsFullscreenActive(true);
+        }
+      } catch (err) {
+        console.warn("Auto-fullscreen on screenshare failed or was blocked:", err);
+      }
+    }
   }, [localParticipant, isReadOnlyReview, isLocked, isInterviewer]);
 
   const toggleChat = useCallback(() => {
@@ -2539,6 +2598,7 @@ function InterviewRoomContent({
                                             const focusState = candidateFocusStates[p.identity];
                                             const isCurrentlyFocused = focusState ? focusState.isFocused : true;
                                             const isCurrentlyFullscreen = focusState ? focusState.isFullscreen : true;
+                                            const isCurrentlyScreenSharing = focusState ? !!focusState.isScreenSharing : false;
                                             return (
                                               <div className="flex items-center gap-1 mt-1 text-[7px] font-extrabold uppercase tracking-wide">
                                                 <span className={cn(
@@ -2551,6 +2611,10 @@ function InterviewRoomContent({
                                                 <span className="text-zinc-700 mx-0.5">|</span>
                                                 <span className={isCurrentlyFullscreen ? "text-indigo-400" : "text-amber-400 animate-pulse font-bold"}>
                                                   {isCurrentlyFullscreen ? "Fullscreen" : "Exited FS"}
+                                                </span>
+                                                <span className="text-zinc-700 mx-0.5">|</span>
+                                                <span className={isCurrentlyScreenSharing ? "text-emerald-450 font-extrabold animate-pulse" : "text-zinc-550"}>
+                                                  {isCurrentlyScreenSharing ? "Screen Sharing" : "No Share"}
                                                 </span>
                                               </div>
                                             );
@@ -3197,22 +3261,45 @@ function InterviewRoomContent({
                     ) : (
                       telemetryLogs.map((log, idx) => {
                         const time = new Date(log.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+                        const isViolation = log.event_type === "warning_issued" ||
+                          log.event_type === "TAB_SWITCH" ||
+                          log.event_type === "WINDOW_BLUR" ||
+                          log.event_type === "MINIMIZED" ||
+                          log.event_type === "FULLSCREEN_EXIT" ||
+                          log.event_type === "SCREEN_SHARE_STOPPED" ||
+                          log.event_type === "DEVTOOLS_SUSPECTED";
+                        
+                        const severity = log.details?.severity || (isViolation ? "high" : "info");
+                        
                         return (
                           <div key={log.id || idx} className="border-b border-zinc-900/60 pb-1.5 last:border-0">
-                            <div className="flex items-center justify-between">
+                            <div className="flex items-center justify-between gap-2">
                               <span className="text-zinc-500">[{time}]</span>
-                              <span className={cn(
-                                "px-1 py-0.5 rounded text-[7px] font-bold uppercase tracking-wider border",
-                                log.event_type === "warning_issued" ? "bg-amber-500/10 text-amber-400 border-amber-500/20" :
-                                log.event_type === "submission" ? "bg-green-500/10 text-green-400 border-green-500/20" :
-                                log.event_type === "TAB_SWITCH" || log.event_type === "WINDOW_BLUR" || log.event_type === "FULLSCREEN_EXIT" || log.event_type === "SCREEN_SHARE_STOPPED" || log.event_type === "DEVTOOLS_SUSPECTED"
-                                  ? "bg-red-500/15 text-red-400 border-red-500/30 animate-pulse font-extrabold"
-                                  : "bg-red-500/10 text-red-400 border-red-500/20"
-                              )}>
-                                {log.event_type}
-                              </span>
+                              <div className="flex items-center gap-1">
+                                {isViolation && (
+                                  <span className={cn(
+                                    "px-1 py-0.2 rounded text-[6px] font-bold uppercase border",
+                                    severity === "high" ? "bg-red-500/20 text-red-400 border-red-500/30" : "bg-amber-500/10 text-amber-400 border-amber-500/20"
+                                  )}>
+                                    {severity}
+                                  </span>
+                                )}
+                                <span className={cn(
+                                  "px-1 py-0.5 rounded text-[7px] font-bold uppercase tracking-wider border",
+                                  log.event_type === "warning_issued" ? "bg-amber-500/10 text-amber-400 border-amber-500/20" :
+                                  log.event_type === "submission" ? "bg-green-500/10 text-green-400 border-green-500/20" :
+                                  isViolation
+                                    ? "bg-red-500/15 text-red-400 border-red-500/30 animate-pulse font-extrabold"
+                                    : "bg-zinc-800 text-zinc-400 border-zinc-700"
+                                )}>
+                                  {log.event_type}
+                                </span>
+                              </div>
                             </div>
-                            <p className="text-[8px] text-zinc-500 pt-1 leading-relaxed">
+                            <p className="text-[8px] text-zinc-400 pt-1 leading-relaxed">
+                              <span className="font-semibold text-zinc-300">
+                                {log.details?.user || log.details?.candidate || username || "Candidate"}:
+                              </span>{" "}
                               {log.details?.reason || log.details?.action || JSON.stringify(log.details || {})}
                             </p>
                           </div>
@@ -3845,7 +3932,7 @@ function InterviewRoomContent({
       )}
 
       {/* Fullscreen Enforced Lockout Overlay (Glassmorphism) */}
-      {interviewMode === "assessment" && !isInterviewer && !isReadOnlyReview && !isLocked && !isFullscreenActive && (
+      {!isInterviewer && !isReadOnlyReview && !isLocked && !isFullscreenActive && actualStartedAt && (
         <div className="fixed inset-0 bg-zinc-950/90 backdrop-blur-2xl z-50 flex flex-col items-center justify-center p-6 select-none animate-fade-in text-center">
           <div className="max-w-md space-y-6 animate-scale-in">
             <div className="w-20 h-20 mx-auto rounded-2xl bg-amber-500/10 border border-amber-500/20 flex items-center justify-center animate-pulse shadow-[0_0_50px_rgba(245,158,11,0.25)]">
