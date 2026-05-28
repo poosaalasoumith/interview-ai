@@ -43,6 +43,8 @@ import {
   Timer,
   Hourglass,
   Clock,
+  ChevronLeft,
+  ChevronRight,
 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { ResizablePanelGroup, ResizablePanel, ResizableHandle } from "@/components/ui/resizable";
@@ -457,7 +459,8 @@ function InterviewRoomContent({
 
   // Proctoring stabilization states
   const [isFullscreenActive, setIsFullscreenActive] = useState(false);
-  const [candidateFocusStates, setCandidateFocusStates] = useState<Record<string, { isFocused: boolean; isFullscreen: boolean; isScreenSharing?: boolean; timestamp: number }>>({});
+  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false); // Collapsible left sidebar for candidates
+  const [candidateFocusStates, setCandidateFocusStates] = useState<Record<string, { isFocused: boolean; isFullscreen: boolean; isMinimized?: boolean; isScreenSharing?: boolean; timestamp: number }>>({});
 
   // Lifecycle & Clock countdown states
   const [sessionStatus, setSessionStatus] = useState<string>("scheduled");
@@ -475,6 +478,7 @@ function InterviewRoomContent({
   
   // Delayed Safe Handshake Ref & Force Subscription trigger
   const lastInfractionTimeRef = useRef<number>(0);
+  const escPressedRef = useRef<boolean>(false);
   const handshakesRef = useRef<Record<string, {
     status: "waiting" | "ready" | "fallback";
     timestamp: number;
@@ -933,12 +937,13 @@ function InterviewRoomContent({
   };
 
   // Broadcast focus status over WebRTC channels to update moderator dashboard cards
-  const broadcastFocusStatus = (isFocused: boolean, isFullscreen: boolean) => {
+  const broadcastFocusStatus = (isFocused: boolean, isFullscreen: boolean, isMinimized: boolean = false) => {
     if (isInterviewer || isReadOnlyReview) return;
     const payload = JSON.stringify({
       type: "CANDIDATE_FOCUS_UPDATE",
       isFocused,
       isFullscreen,
+      isMinimized,
       isScreenSharing: localParticipant?.isScreenShareEnabled || isScreenSharing,
       identity: localParticipant.identity
     });
@@ -951,7 +956,10 @@ function InterviewRoomContent({
   };
 
   // Standardized automated infraction triggers
-  const triggerInfraction = async (type: "TAB_SWITCH" | "WINDOW_BLUR" | "FULLSCREEN_EXIT" | "SCREEN_SHARE_STOPPED" | "DEVTOOLS_SUSPECTED" | "MINIMIZED", message: string) => {
+  const triggerInfraction = async (
+    type: "TAB_SWITCH" | "WINDOW_BLUR" | "FULLSCREEN_EXIT" | "SCREEN_SHARE_STOPPED" | "DEVTOOLS_SUSPECTED" | "MINIMIZED" | "WINDOW_MINIMIZED" | "ESC_EXIT" | "FULLSCREEN_ENTER",
+    message: string
+  ) => {
     if (isInterviewer || isReadOnlyReview || isLocked) return;
 
     // Guard against multiple rapid infractions (e.g. within 1.5 seconds)
@@ -1154,7 +1162,10 @@ function InterviewRoomContent({
         (log.event_type === "warning_issued" ||
          log.event_type === "TAB_SWITCH" ||
          log.event_type === "WINDOW_BLUR" ||
-         log.event_type === "FULLSCREEN_EXIT") && 
+         log.event_type === "MINIMIZED" ||
+         log.event_type === "WINDOW_MINIMIZED" ||
+         log.event_type === "FULLSCREEN_EXIT" ||
+         log.event_type === "ESC_EXIT") && 
         (log.details?.candidate === candidateNameOrIdentity || 
          log.details?.recipient === candidateNameOrIdentity ||
          log.details?.user === candidateNameOrIdentity)
@@ -1260,6 +1271,7 @@ function InterviewRoomContent({
           [data.identity]: {
             isFocused: data.isFocused,
             isFullscreen: data.isFullscreen,
+            isMinimized: data.isMinimized || false,
             isScreenSharing: data.isScreenSharing || false,
             timestamp: Date.now()
           }
@@ -1404,7 +1416,10 @@ function InterviewRoomContent({
           t.event_type === "warning_issued" || 
           t.event_type === "TAB_SWITCH" || 
           t.event_type === "WINDOW_BLUR" || 
-          t.event_type === "FULLSCREEN_EXIT"
+          t.event_type === "MINIMIZED" ||
+          t.event_type === "WINDOW_MINIMIZED" ||
+          t.event_type === "FULLSCREEN_EXIT" ||
+          t.event_type === "ESC_EXIT"
         );
         setWarningsCount(warnings.length);
         
@@ -1553,7 +1568,10 @@ function InterviewRoomContent({
               t.event_type === "warning_issued" || 
               t.event_type === "TAB_SWITCH" || 
               t.event_type === "WINDOW_BLUR" || 
-              t.event_type === "FULLSCREEN_EXIT"
+              t.event_type === "MINIMIZED" ||
+              t.event_type === "WINDOW_MINIMIZED" ||
+              t.event_type === "FULLSCREEN_EXIT" ||
+              t.event_type === "ESC_EXIT"
             );
             
             if (!isInterviewer && warnings.length > warningsCount) {
@@ -1636,6 +1654,7 @@ function InterviewRoomContent({
           [data.identity]: {
             isFocused: data.isFocused,
             isFullscreen: data.isFullscreen,
+            isMinimized: data.isMinimized || false,
             isScreenSharing: data.isScreenSharing || false,
             timestamp: Date.now()
           }
@@ -1661,26 +1680,31 @@ function InterviewRoomContent({
     if (isInterviewer || isReadOnlyReview || isLocked || !actualStartedAt) return;
 
     const handleVisibilityChange = () => {
+      const isMinimized = document.hidden && ((window.outerWidth === 0 && window.outerHeight === 0) || !document.hasFocus());
       if (document.hidden) {
-        const isMinimized = (window.outerWidth === 0 && window.outerHeight === 0) || !document.hasFocus();
-        const type = isMinimized ? "MINIMIZED" : "TAB_SWITCH";
+        const type = isMinimized ? "WINDOW_MINIMIZED" : "TAB_SWITCH";
         const msg = isMinimized
           ? "Candidate minimized the assessment browser window!"
           : "Candidate switched tabs or minimized the browser!";
         triggerInfraction(type, msg);
-        broadcastFocusStatus(false, !!document.fullscreenElement);
+        broadcastFocusStatus(false, !!document.fullscreenElement, isMinimized);
       } else {
-        broadcastFocusStatus(document.hasFocus(), !!document.fullscreenElement);
+        broadcastFocusStatus(document.hasFocus(), !!document.fullscreenElement, false);
       }
     };
 
     const handleBlur = () => {
-      triggerInfraction("WINDOW_BLUR", "Candidate clicked outside the assessment window / lost focus!");
-      broadcastFocusStatus(false, !!document.fullscreenElement);
+      const isMinimized = (window.outerWidth === 0 && window.outerHeight === 0);
+      const type = isMinimized ? "WINDOW_MINIMIZED" : "WINDOW_BLUR";
+      const msg = isMinimized
+        ? "Candidate minimized the assessment browser window!"
+        : "Candidate clicked outside the assessment window / lost focus!";
+      triggerInfraction(type, msg);
+      broadcastFocusStatus(false, !!document.fullscreenElement, isMinimized);
     };
 
     const handleFocus = () => {
-      broadcastFocusStatus(true, !!document.fullscreenElement);
+      broadcastFocusStatus(true, !!document.fullscreenElement, false);
     };
 
     document.addEventListener("visibilitychange", handleVisibilityChange);
@@ -1688,7 +1712,7 @@ function InterviewRoomContent({
     window.addEventListener("focus", handleFocus);
 
     // Initial broadcast
-    broadcastFocusStatus(document.hasFocus(), !!document.fullscreenElement);
+    broadcastFocusStatus(document.hasFocus(), !!document.fullscreenElement, false);
 
     return () => {
       document.removeEventListener("visibilitychange", handleVisibilityChange);
@@ -1707,7 +1731,31 @@ function InterviewRoomContent({
       
       if (!isInterviewer && !isLocked && actualStartedAt) {
         if (!isCurrentlyFullscreen) {
-          triggerInfraction("FULLSCREEN_EXIT", "Candidate exited fullscreen focus mode!");
+          const type = escPressedRef.current ? "ESC_EXIT" : "FULLSCREEN_EXIT";
+          const msg = escPressedRef.current 
+            ? "Candidate exited fullscreen using the ESC key!" 
+            : "Candidate exited fullscreen focus mode!";
+          triggerInfraction(type, msg);
+          escPressedRef.current = false;
+        } else {
+          // Log FULLSCREEN_ENTER when successfully returning to fullscreen
+          logTelemetry("FULLSCREEN_ENTER", { user: username, timestamp: new Date().toISOString() });
+          
+          // Broadcast FULLSCREEN_ENTER to moderator so the log is updated
+          const enterPayload = JSON.stringify({
+            type: "WARNING_ISSUED",
+            infractionType: "FULLSCREEN_ENTER",
+            count: warningsCount,
+            reason: "Candidate entered fullscreen mode.",
+            candidateIdentity: localParticipant.identity,
+            candidateName: username || "Candidate",
+            moderatorName: "System Proctor",
+            timestamp: new Date().toISOString()
+          });
+          try {
+            sendControl(new TextEncoder().encode(enterPayload), { reliable: true });
+            sendPresence(new TextEncoder().encode(enterPayload), { reliable: true });
+          } catch (e) {}
         }
         broadcastFocusStatus(document.hasFocus(), isCurrentlyFullscreen);
       }
@@ -1867,6 +1915,13 @@ function InterviewRoomContent({
     if (isInterviewer || isReadOnlyReview || isLocked || !actualStartedAt) return;
 
     const handleKeyDown = (e: KeyboardEvent) => {
+      // Escape fullscreen exit detection
+      if (e.key === "Escape" || e.key === "Esc") {
+        if (document.fullscreenElement) {
+          escPressedRef.current = true;
+        }
+      }
+
       // Devtools shortcuts: F12, Ctrl+Shift+I/J/C, Cmd+Opt+I
       const isDevToolsKeys = 
         e.key === "F12" ||
@@ -2019,19 +2074,46 @@ function InterviewRoomContent({
       return;
     }
     const nextState = !localParticipant.isScreenShareEnabled;
-    await localParticipant.setScreenShareEnabled(nextState);
-    setIsScreenSharing(nextState);
-    toast.success(nextState ? "Screen Share Started" : "Screen Share Stopped");
 
-    // Auto-maximize on candidate screenshare initiation
-    if (nextState && !isInterviewer) {
-      try {
-        if (document.documentElement.requestFullscreen) {
-          await document.documentElement.requestFullscreen();
-          setIsFullscreenActive(true);
+    if (nextState) {
+      // 1. Immediately request fullscreen utilizing the active user gesture click context
+      if (!isInterviewer) {
+        try {
+          if (document.documentElement.requestFullscreen && !document.fullscreenElement) {
+            await document.documentElement.requestFullscreen();
+            setIsFullscreenActive(true);
+            setIsSidebarCollapsed(true); // Maximize workspace focus
+          }
+        } catch (err) {
+          console.warn("Fullscreen request blocked or failed before screenshare prompt:", err);
         }
-      } catch (err) {
-        console.warn("Auto-fullscreen on screenshare failed or was blocked:", err);
+      }
+
+      // 2. Launch display media screenshare prompt
+      try {
+        await localParticipant.setScreenShareEnabled(true);
+        setIsScreenSharing(true);
+        toast.success("Screen Share Started");
+      } catch (err: any) {
+        console.warn("Candidate screen sharing failed or canceled:", err);
+        toast.error("Screen sharing is required to proceed. Please grant permissions.");
+        setIsScreenSharing(false);
+        // Exiting fullscreen since screen sharing failed or was canceled
+        if (document.fullscreenElement) {
+          try {
+            await document.exitFullscreen();
+            setIsFullscreenActive(false);
+          } catch (ex) {}
+        }
+      }
+    } else {
+      // Candidate is stopping screensharing
+      try {
+        await localParticipant.setScreenShareEnabled(false);
+        setIsScreenSharing(false);
+        toast.success("Screen Share Stopped");
+      } catch (err: any) {
+        console.error("Failed to stop screen share stream:", err);
       }
     }
   }, [localParticipant, isReadOnlyReview, isLocked, isInterviewer]);
@@ -2183,7 +2265,10 @@ function InterviewRoomContent({
   return (
     <div className="flex-1 flex flex-col min-h-0 bg-zinc-950 relative">
       {/* Header bar */}
-      <header className="h-14 shrink-0 flex items-center justify-between px-6 border-b border-zinc-800 bg-zinc-900/60 backdrop-blur-lg z-30 select-none">
+      <header className={cn(
+        "shrink-0 flex items-center justify-between border-b border-zinc-800 bg-zinc-900/60 backdrop-blur-lg z-30 select-none transition-all duration-300",
+        !isLocalModerator && isFullscreenActive ? "h-11 px-4" : "h-14 px-6"
+      )}>
         <div className="flex items-center gap-3">
           {/* Lobby State Machine Badge */}
           {(() => {
@@ -2549,8 +2634,8 @@ function InterviewRoomContent({
                               {activeCandidates.map((p) => {
                                 const candCameraTrack = cameraTracks.find(t => t.participant.identity === p.identity);
                                 const candScreenShareTrack = screenShareTracks.find(t => t.participant.identity === p.identity);
-                                const tabOuts = telemetryLogs.filter(log => (log.event_type === "tab_switch" || log.event_type === "TAB_SWITCH" || log.event_type === "WINDOW_BLUR") && (log.details?.candidate === p.identity || log.details?.user === p.name || log.details?.user === p.identity)).length;
-                                const fullExits = telemetryLogs.filter(log => (log.event_type === "fullscreen_exit" || log.event_type === "FULLSCREEN_EXIT") && (log.details?.candidate === p.identity || log.details?.user === p.name || log.details?.user === p.identity)).length;
+                                const tabOuts = telemetryLogs.filter(log => (log.event_type === "tab_switch" || log.event_type === "TAB_SWITCH" || log.event_type === "WINDOW_BLUR" || log.event_type === "MINIMIZED" || log.event_type === "WINDOW_MINIMIZED") && (log.details?.candidate === p.identity || log.details?.user === p.name || log.details?.user === p.identity)).length;
+                                const fullExits = telemetryLogs.filter(log => (log.event_type === "fullscreen_exit" || log.event_type === "FULLSCREEN_EXIT" || log.event_type === "ESC_EXIT") && (log.details?.candidate === p.identity || log.details?.user === p.name || log.details?.user === p.identity)).length;
                                 const idles = telemetryLogs.filter(log => log.event_type === "idle" && (log.details?.candidate === p.identity || log.details?.user === p.name || log.details?.user === p.identity)).length;
                                 const warnings = getCandidateWarningsCount(p.identity);
                                 const isSpeaking = p.isSpeaking;
@@ -2599,14 +2684,25 @@ function InterviewRoomContent({
                                             const isCurrentlyFocused = focusState ? focusState.isFocused : true;
                                             const isCurrentlyFullscreen = focusState ? focusState.isFullscreen : true;
                                             const isCurrentlyScreenSharing = focusState ? !!focusState.isScreenSharing : false;
+                                            const isCurrentlyMinimized = focusState ? !!focusState.isMinimized : false;
                                             return (
                                               <div className="flex items-center gap-1 mt-1 text-[7px] font-extrabold uppercase tracking-wide">
                                                 <span className={cn(
                                                   "w-1.5 h-1.5 rounded-full inline-block shrink-0",
-                                                  isCurrentlyFocused ? "bg-emerald-500 shadow-[0_0_6px_rgba(16,185,129,0.6)] animate-pulse" : "bg-red-500 shadow-[0_0_6px_rgba(239,68,68,0.6)] animate-ping"
+                                                  isCurrentlyMinimized 
+                                                    ? "bg-red-600 shadow-[0_0_6px_rgba(220,38,38,0.6)] animate-ping" 
+                                                    : isCurrentlyFocused 
+                                                      ? "bg-emerald-500 shadow-[0_0_6px_rgba(16,185,129,0.6)] animate-pulse" 
+                                                      : "bg-red-500 shadow-[0_0_6px_rgba(239,68,68,0.6)] animate-ping"
                                                 )} />
-                                                <span className={isCurrentlyFocused ? "text-emerald-400" : "text-red-400 font-bold"}>
-                                                  {isCurrentlyFocused ? "Focused" : "Lost Focus"}
+                                                <span className={
+                                                  isCurrentlyMinimized 
+                                                    ? "text-red-500 font-extrabold" 
+                                                    : isCurrentlyFocused 
+                                                      ? "text-emerald-400" 
+                                                      : "text-red-400 font-bold"
+                                                }>
+                                                  {isCurrentlyMinimized ? "Minimized" : isCurrentlyFocused ? "Focused" : "Lost Focus"}
                                                 </span>
                                                 <span className="text-zinc-700 mx-0.5">|</span>
                                                 <span className={isCurrentlyFullscreen ? "text-indigo-400" : "text-amber-400 animate-pulse font-bold"}>
@@ -2913,13 +3009,13 @@ function InterviewRoomContent({
                               <div className="flex flex-col items-center px-2 py-1 bg-zinc-950/40 border border-zinc-850 rounded-lg">
                                 <span className="text-[8px] text-zinc-550 font-bold uppercase tracking-wider">Tab Out</span>
                                 <span className="text-xs font-bold text-zinc-300 mt-0.5">
-                                  {candidateLogs.filter(log => log.event_type === "tab_switch").length}
+                                  {candidateLogs.filter(log => log.event_type === "tab_switch" || log.event_type === "TAB_SWITCH" || log.event_type === "WINDOW_BLUR" || log.event_type === "MINIMIZED" || log.event_type === "WINDOW_MINIMIZED").length}
                                 </span>
                               </div>
                               <div className="flex flex-col items-center px-2 py-1 bg-zinc-950/40 border border-zinc-850 rounded-lg">
                                 <span className="text-[8px] text-zinc-550 font-bold uppercase tracking-wider">Full Exit</span>
                                 <span className="text-xs font-bold text-zinc-300 mt-0.5">
-                                  {candidateLogs.filter(log => log.event_type === "fullscreen_exit").length}
+                                  {candidateLogs.filter(log => log.event_type === "fullscreen_exit" || log.event_type === "FULLSCREEN_EXIT" || log.event_type === "ESC_EXIT").length}
                                 </span>
                               </div>
                               <div className="flex flex-col items-center px-2 py-1 bg-zinc-950/40 border border-zinc-850 rounded-lg">
@@ -3265,7 +3361,9 @@ function InterviewRoomContent({
                           log.event_type === "TAB_SWITCH" ||
                           log.event_type === "WINDOW_BLUR" ||
                           log.event_type === "MINIMIZED" ||
+                          log.event_type === "WINDOW_MINIMIZED" ||
                           log.event_type === "FULLSCREEN_EXIT" ||
+                          log.event_type === "ESC_EXIT" ||
                           log.event_type === "SCREEN_SHARE_STOPPED" ||
                           log.event_type === "DEVTOOLS_SUSPECTED";
                         
@@ -3274,7 +3372,7 @@ function InterviewRoomContent({
                         return (
                           <div key={log.id || idx} className="border-b border-zinc-900/60 pb-1.5 last:border-0">
                             <div className="flex items-center justify-between gap-2">
-                              <span className="text-zinc-500">[{time}]</span>
+                              <span className="text-zinc-550">[{time}]</span>
                               <div className="flex items-center gap-1">
                                 {isViolation && (
                                   <span className={cn(
@@ -3287,6 +3385,7 @@ function InterviewRoomContent({
                                 <span className={cn(
                                   "px-1 py-0.5 rounded text-[7px] font-bold uppercase tracking-wider border",
                                   log.event_type === "warning_issued" ? "bg-amber-500/10 text-amber-400 border-amber-500/20" :
+                                  log.event_type === "FULLSCREEN_ENTER" ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/20" :
                                   log.event_type === "submission" ? "bg-green-500/10 text-green-400 border-green-500/20" :
                                   isViolation
                                     ? "bg-red-500/15 text-red-400 border-red-500/30 animate-pulse font-extrabold"
@@ -3324,7 +3423,7 @@ function InterviewRoomContent({
                     <MessageSquare className="w-4 h-4 text-zinc-300" />
                     <span className="text-xs font-bold uppercase tracking-wider text-zinc-300">Room Chat</span>
                     {unreadCount > 0 && (
-                      <span className="bg-primary px-1.5 py-0.5 text-[8px] font-bold text-white rounded-full animate-pulse">
+                      <span className="bg-primary px-1.5 py-0.5 text-[8px] font-bold text-primary-foreground rounded-full animate-pulse">
                         {unreadCount} new
                       </span>
                     )}
@@ -3416,7 +3515,7 @@ function InterviewRoomContent({
                               <div className={cn(
                                 "px-3 py-2 rounded-xl text-xs leading-relaxed break-words whitespace-pre-wrap shadow-md border",
                                 isSelf 
-                                  ? "bg-primary border-primary/20 text-white rounded-br-none" 
+                                  ? "bg-primary border-primary/20 text-primary-foreground rounded-br-none" 
                                   : "bg-zinc-800 border-zinc-700/50 text-zinc-100 rounded-bl-none"
                               )}>
                                 {msg.message}
@@ -3469,20 +3568,33 @@ function InterviewRoomContent({
           /* 2. SECURE CANDIDATE LAYOUT                                                */
           /* ========================================================================= */
           <div className={cn(
-            "w-full h-full bg-zinc-950 overflow-hidden",
+            "w-full h-full bg-zinc-950 overflow-hidden relative",
             isTablet 
               ? "flex flex-col" 
               : isChatOpen 
-                ? "grid grid-cols-[220px_1fr_320px] h-[calc(100vh-56px)]" 
-                : "grid grid-cols-[220px_1fr] h-[calc(100vh-56px)]"
+                ? (isSidebarCollapsed ? "grid grid-cols-[64px_1fr_320px] h-[calc(100vh-56px)]" : "grid grid-cols-[220px_1fr_320px] h-[calc(100vh-56px)]")
+                : (isSidebarCollapsed ? "grid grid-cols-[64px_1fr] h-[calc(100vh-56px)]" : "grid grid-cols-[220px_1fr] h-[calc(100vh-56px)]")
           )}>
             {/* LEFT SIDEBAR: Candidate Own Local Video Stream Only */}
             <aside className={cn(
-              "shrink-0 bg-zinc-950 border-zinc-800 flex flex-col min-h-0 select-none",
+              "shrink-0 bg-zinc-950 border-zinc-800 flex flex-col min-h-0 select-none relative transition-all duration-300",
               isTablet 
                 ? "w-full h-[120px] flex-row items-center border-b p-3 gap-3 overflow-x-auto overflow-y-hidden" 
-                : "w-[220px] h-full border-r p-4 gap-4 overflow-y-auto scrollbar-none"
+                : isSidebarCollapsed 
+                  ? "w-[64px] h-full border-r p-2 gap-2 overflow-hidden items-center" 
+                  : "w-[220px] h-full border-r p-4 gap-4 overflow-y-auto scrollbar-none"
             )}>
+              {/* Collapse/Expand Toggle Button (Desktop only) */}
+              {!isTablet && (
+                <button
+                  onClick={() => setIsSidebarCollapsed(prev => !prev)}
+                  className="absolute top-3 right-[-10px] z-40 bg-zinc-900 hover:bg-zinc-800 text-zinc-400 hover:text-white rounded-full p-0.5 border border-zinc-700 shadow-md cursor-pointer transition-all duration-200"
+                  title={isSidebarCollapsed ? "Expand Sidebar" : "Collapse Sidebar"}
+                >
+                  {isSidebarCollapsed ? <ChevronRight className="w-3 h-3" /> : <ChevronLeft className="w-3 h-3" />}
+                </button>
+              )}
+
               <div className={cn(
                 "flex gap-3 min-h-0",
                 isTablet ? "flex-row items-center" : "flex-col w-full"
@@ -3535,8 +3647,8 @@ function InterviewRoomContent({
               </div>
 
               {/* Secure Link Telemetry for Candidate */}
-              {!isTablet && (
-                <div className="mt-auto pt-4 border-t border-zinc-900/60 flex flex-col gap-2 select-none">
+              {!isTablet && !isSidebarCollapsed && (
+                <div className="mt-auto pt-4 border-t border-zinc-900/60 flex flex-col gap-2 select-none animate-fade-in">
                   <div className="flex items-center justify-between text-[10px] text-zinc-500 font-bold uppercase tracking-wider">
                     <span>Link Health</span>
                     <span className="text-emerald-400 font-extrabold">Excellent</span>
@@ -3752,7 +3864,7 @@ function InterviewRoomContent({
                             <div className={cn(
                               "px-3 py-2 rounded-xl text-xs font-medium leading-relaxed break-words whitespace-pre-wrap shadow-md border",
                               isSelf 
-                                ? "bg-primary border-primary/20 text-white rounded-br-none" 
+                                ? "bg-primary border-primary/20 text-primary-foreground rounded-br-none" 
                                 : "bg-zinc-800 border-zinc-700/50 text-zinc-100 rounded-bl-none"
                             )}>
                               {msg.message}
@@ -3864,7 +3976,7 @@ function InterviewRoomContent({
             
             {/* Unread message badge */}
             {unreadCount > 0 && (
-              <span className="absolute -top-1 -right-1 flex h-4 w-4 items-center justify-center rounded-full bg-primary text-[8px] font-bold text-white shadow-lg border border-zinc-950 animate-pulse">
+              <span className="absolute -top-1 -right-1 flex h-4 w-4 items-center justify-center rounded-full bg-primary text-[8px] font-bold text-primary-foreground shadow-lg border border-zinc-950 animate-pulse">
                 {unreadCount}
               </span>
             )}
@@ -3933,36 +4045,82 @@ function InterviewRoomContent({
 
       {/* Fullscreen Enforced Lockout Overlay (Glassmorphism) */}
       {!isInterviewer && !isReadOnlyReview && !isLocked && !isFullscreenActive && actualStartedAt && (
-        <div className="fixed inset-0 bg-zinc-950/90 backdrop-blur-2xl z-50 flex flex-col items-center justify-center p-6 select-none animate-fade-in text-center">
-          <div className="max-w-md space-y-6 animate-scale-in">
-            <div className="w-20 h-20 mx-auto rounded-2xl bg-amber-500/10 border border-amber-500/20 flex items-center justify-center animate-pulse shadow-[0_0_50px_rgba(245,158,11,0.25)]">
-              <Maximize2 className="w-10 h-10 text-amber-500" />
-            </div>
-            <div className="space-y-2">
-              <h2 className="text-3xl font-extrabold text-white tracking-tight">Fullscreen Required</h2>
-              <p className="text-zinc-400 text-sm leading-relaxed">
-                Fullscreen mode is required during this assessment. Please return to fullscreen immediately.
-              </p>
+        <div className="fixed inset-0 bg-zinc-950/85 backdrop-blur-2xl z-50 flex flex-col items-center justify-center p-6 select-none animate-fade-in text-center">
+          {/* Glowing background meshes */}
+          <div className="absolute top-1/4 left-1/4 w-96 h-96 bg-red-500/10 rounded-full blur-[120px] pointer-events-none animate-pulse" />
+          <div className="absolute bottom-1/4 right-1/4 w-96 h-96 bg-amber-500/10 rounded-full blur-[120px] pointer-events-none animate-pulse delay-1000" />
+          
+          <div className="bg-zinc-900/80 border border-zinc-800 backdrop-blur-xl rounded-3xl p-8 max-w-md w-full shadow-2xl relative overflow-hidden space-y-6 animate-scale-in border-red-500/20 shadow-red-950/15">
+            {/* Red pulsing glow line at the top */}
+            <div className="absolute top-0 inset-x-0 h-1 bg-gradient-to-r from-red-500 via-amber-500 to-red-500 animate-pulse" />
+            
+            {/* Spinning/pulsing custom warning proctor badge */}
+            <div className="relative w-20 h-20 mx-auto">
+              <div className="absolute inset-0 rounded-2xl bg-red-500/5 border border-red-500/20 animate-ping opacity-75" />
+              <div className="absolute -inset-2 rounded-3xl bg-red-500/5 border border-red-500/10 animate-pulse" />
+              <div className="relative w-20 h-20 rounded-2xl bg-red-500/10 border border-red-500/20 flex items-center justify-center shadow-[0_0_30px_rgba(239,68,68,0.25)]">
+                <Maximize2 className="w-10 h-10 text-red-500 animate-pulse" />
+              </div>
             </div>
             
-            {warningsCount > 0 && (
-              <div className="bg-red-500/15 border border-red-500/20 rounded-xl p-3 text-xs text-red-400 font-medium">
-                Infractions recorded: {warningsCount} / 3
+            <div className="space-y-3">
+              <h2 className="text-2xl font-extrabold text-white tracking-tight">Fullscreen Focus Enforced</h2>
+              <div className="text-zinc-400 text-sm leading-relaxed font-medium space-y-2">
+                <p className="text-red-400 font-semibold uppercase text-[10px] tracking-wider animate-pulse">Security Guideline Violation</p>
+                <p>
+                  Fullscreen mode is required during this assessment.
+                </p>
+                <p className="text-zinc-300 font-bold text-base mt-1">
+                  Please return to fullscreen immediately.
+                </p>
+              </div>
+            </div>
+            
+            {warningsCount > 0 ? (
+              <div className="bg-red-500/10 border border-red-500/20 rounded-xl p-3 flex items-center justify-between font-mono text-xs text-red-400 shadow-inner">
+                <span className="flex items-center gap-1.5 font-bold uppercase tracking-wider animate-pulse">
+                  <span className="w-1.5 h-1.5 rounded-full bg-red-500" />
+                  Active Warnings
+                </span>
+                <span className="font-extrabold text-[13px] bg-red-500/20 px-2 py-0.5 rounded border border-red-500/30">
+                  {warningsCount} / 3
+                </span>
+              </div>
+            ) : (
+              <div className="bg-emerald-500/5 border border-emerald-500/10 rounded-xl p-3 flex items-center justify-between font-mono text-xs text-emerald-400">
+                <span className="flex items-center gap-1.5 uppercase font-bold tracking-wider">
+                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
+                  Warnings Issued
+                </span>
+                <span className="font-extrabold text-[13px] bg-emerald-500/10 px-2 py-0.5 rounded border border-emerald-500/20">
+                  0 / 3
+                </span>
               </div>
             )}
 
             <Button
               onClick={async () => {
                 try {
-                  await document.documentElement.requestFullscreen();
+                  if (document.documentElement.requestFullscreen) {
+                    await document.documentElement.requestFullscreen();
+                    setIsFullscreenActive(true);
+                  }
                 } catch (err) {
                   toast.error("Failed to enter fullscreen. Please grant browser permissions.");
                 }
               }}
-              className="w-full bg-indigo-650 hover:bg-indigo-600 text-white font-bold uppercase text-xs tracking-wider h-11 rounded-xl shadow-lg shadow-indigo-950/30 transition-all duration-300 cursor-pointer"
+              className="w-full bg-red-600 hover:bg-red-500 text-white font-bold uppercase text-xs tracking-widest h-12 rounded-xl shadow-lg shadow-red-950/30 border border-red-500/20 transition-all duration-300 cursor-pointer flex items-center justify-center gap-2 group relative overflow-hidden active:scale-98 animate-pulse hover:animate-none"
             >
-              Enter Fullscreen Mode
+              <span className="absolute inset-0 w-full h-full bg-gradient-to-r from-red-500 to-amber-500 opacity-0 group-hover:opacity-100 transition-opacity duration-300" />
+              <span className="relative flex items-center gap-2">
+                <Maximize2 className="w-4 h-4 group-hover:scale-110 transition" />
+                Return to Fullscreen Mode
+              </span>
             </Button>
+            
+            <p className="text-[9px] text-zinc-550 font-bold uppercase tracking-wider leading-none">
+              Exiting fullscreen logs an automated proctoring infraction
+            </p>
           </div>
         </div>
       )}

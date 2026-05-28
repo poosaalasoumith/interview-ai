@@ -128,3 +128,167 @@
     @apply font-sans;
   }
 }
+
+/* ========================================================================= */
+/* ACCESSIBILITY & CONTRAST DESIGN TOKENS (WCAG COMPLIANT)                   */
+/* ========================================================================= */
+
+/* Centralized Button Tokens */
+.primary-button {
+  background-color: var(--primary);
+  color: var(--primary-foreground);
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3), 0 0 1px 1px rgba(255, 255, 255, 0.05);
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 0.75rem;
+  outline: none;
+}
+.primary-button:hover {
+  filter: brightness(1.05);
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.4), 0 0 1px 1px rgba(255, 255, 255, 0.1);
+  transform: translateY(-1px);
+}
+.primary-button:active {
+  transform: translateY(0);
+}
+.primary-button:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+}
+.primary-button:disabled {
+  opacity: 0.5;
+  pointer-events: none;
+}
+
+.secondary-button {
+  background-color: var(--secondary);
+  color: var(--secondary-foreground);
+  font-weight: 600;
+  border: 1px solid var(--border);
+  box-shadow: 0 4px 10px rgba(0, 0, 0, 0.15);
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 0.75rem;
+  outline: none;
+}
+.secondary-button:hover {
+  background-color: var(--accent);
+  color: var(--accent-foreground);
+  border-color: var(--accent);
+  box-shadow: 0 6px 14px rgba(0, 0, 0, 0.2);
+  transform: translateY(-1px);
+}
+.secondary-button:active {
+  transform: translateY(0);
+}
+.secondary-button:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+}
+
+.danger-button {
+  background-color: var(--destructive);
+  color: oklch(0.985 0 0) !important; /* Explicitly white for high contrast text */
+  font-weight: 600;
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  box-shadow: 0 4px 12px rgba(220, 38, 38, 0.15);
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 0.75rem;
+  outline: none;
+}
+.danger-button:hover {
+  filter: brightness(1.15);
+  box-shadow: 0 6px 16px rgba(220, 38, 38, 0.25);
+  transform: translateY(-1px);
+}
+.danger-button:active {
+  transform: translateY(0);
+}
+.danger-button:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+}
+
+.success-button {
+  background-color: oklch(0.627 0.194 149.251); /* Vibrant emerald */
+  color: oklch(0.05 0 0) !important; /* Extremely dark forest/black text for WCAG compliance */
+  font-weight: 700;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  box-shadow: 0 4px 12px rgba(16, 185, 129, 0.15);
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 0.75rem;
+  outline: none;
+}
+.success-button:hover {
+  filter: brightness(1.08);
+  box-shadow: 0 6px 16px rgba(16, 185, 129, 0.25);
+  transform: translateY(-1px);
+}
+.success-button:active {
+  transform: translateY(0);
+}
+
+.ghost-button {
+  background-color: transparent;
+  color: var(--foreground);
+  font-weight: 500;
+  transition: all 0.2s ease;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 0.75rem;
+  outline: none;
+}
+.ghost-button:hover {
+  background-color: var(--accent);
+  color: var(--accent-foreground);
+}
+
+/* Controlled Neon & Card Glow Refinements (Softer accents to reduce eye fatigue) */
+.card-glow-subtle {
+  box-shadow: 0 10px 30px -10px rgba(0, 0, 0, 0.5), 0 1px 3px rgba(255, 255, 255, 0.05);
+}
+
+.card-glow-primary {
+  box-shadow: 0 10px 25px -12px rgba(233, 90, 31, 0.12), 0 0 1px 1px rgba(233, 90, 31, 0.03);
+}
+
+.card-glow-indigo {
+  box-shadow: 0 10px 25px -12px rgba(99, 102, 241, 0.12), 0 0 1px 1px rgba(99, 102, 241, 0.03);
+}
+
+/* Badge Styles */
+.badge-styles {
+  font-weight: 600;
+  border: 1px solid var(--border);
+  background-color: var(--secondary);
+  color: var(--secondary-foreground);
+}
+
+/* Explicit High Contrast Typography Helper Classes */
+.text-contrast-high {
+  color: var(--foreground) !important;
+}
+
+.text-contrast-medium {
+  color: var(--muted-foreground) !important;
+}
