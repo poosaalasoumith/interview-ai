@@ -8,7 +8,7 @@ export default defineConfig({
   workers: 1, // Keep worker count at 1 to prevent auth state pollution and rate limiting
   reporter: [["list"], ["html", { outputFolder: "playwright-report", open: "never" }]],
   use: {
-    baseURL: "http://localhost:3000",
+    baseURL: process.env.PLAYWRIGHT_TEST_BASE_URL || "http://localhost:3000",
     trace: "on-first-retry",
     screenshot: "only-on-failure",
     video: "retain-on-failure",
