@@ -72,9 +72,16 @@ interface InterviewClientProps {
   username: string;
   isInterviewer?: boolean;
   isReadOnlyReview?: boolean;
+  assessmentTemplateId?: string | null;
 }
 
-export function InterviewClient({ roomId, username, isInterviewer = false, isReadOnlyReview = false }: InterviewClientProps) {
+export function InterviewClient({ 
+  roomId, 
+  username, 
+  isInterviewer = false, 
+  isReadOnlyReview = false,
+  assessmentTemplateId: initialAssessmentTemplateId = null
+}: InterviewClientProps) {
   const [token, setToken] = useState<string>("");
   const [preJoinComplete, setPreJoinComplete] = useState(isReadOnlyReview || false);
   const [error, setError] = useState<string | null>(null);
@@ -82,6 +89,97 @@ export function InterviewClient({ roomId, username, isInterviewer = false, isRea
   const [isEnding, startEndingTransition] = useTransition();
   const [isProcessingFeedback, setIsProcessingFeedback] = useState(false);
   const [evaluationStep, setEvaluationStep] = useState(0);
+
+  // Custom Assessment states
+  const [assessmentTemplateId, setAssessmentTemplateId] = useState<string | null>(initialAssessmentTemplateId);
+  const [questions, setQuestions] = useState<any[]>([]);
+  const [activeQIdx, setActiveQIdx] = useState<number>(0);
+  const [attempt, setAttempt] = useState<any>(null);
+  const [isTestCandidate, setIsTestCandidate] = useState(false);
+
+  const handleQuestionSelect = (idx: number) => {
+    setActiveQIdx(idx);
+    setProblemStatement(questions[idx]);
+  };
+
+  const handleCodeSubmitted = (questionId: string, status: string) => {
+    setQuestions((prev: any[]) => {
+      const updated = prev.map((q: any) => q.id === questionId ? { ...q, status } : q);
+      return updated;
+    });
+    setProblemStatement((prev: any) => prev && prev.id === questionId ? { ...prev, status } : prev);
+  };
+
+  const fetchAssessmentData = async (templateId: string, candidateId: string) => {
+    const supabase = createClient();
+    try {
+      // Fetch questions
+      const { data: quest, error: questErr } = await supabase
+        .from("assessment_questions")
+        .select(`
+          *,
+          question_testcases(*)
+        `)
+        .eq("template_id", templateId)
+        .order("order_index", { ascending: true });
+
+      if (questErr) throw questErr;
+
+      let initialQuestions = quest || [];
+
+      // Fetch or create attempt for candidate
+      let { data: att, error: attErr } = await supabase
+        .from("assessment_attempts")
+        .select("*")
+        .eq("interview_id", roomId)
+        .eq("candidate_id", candidateId)
+        .maybeSingle();
+
+      if (attErr) throw attErr;
+
+      if (!att && !isInterviewer) {
+        // Candidate joins - create attempt
+        const { data: newAtt, error: newAttErr } = await supabase
+          .from("assessment_attempts")
+          .insert({
+            interview_id: roomId,
+            candidate_id: candidateId,
+            template_id: templateId,
+            status: "in_progress"
+          })
+          .select()
+          .single();
+
+        if (newAttErr) throw newAttErr;
+        att = newAtt;
+      }
+
+      setAttempt(att);
+
+      // Fetch statuses of candidate answers for questions, if attempt exists
+      if (att && initialQuestions.length > 0) {
+        const { data: answers } = await supabase
+          .from("candidate_answers")
+          .select("question_id, status")
+          .eq("attempt_id", att.id);
+          
+        if (answers) {
+          const statusMap = new Map(answers.map(a => [a.question_id, a.status]));
+          initialQuestions = initialQuestions.map(q => ({
+            ...q,
+            status: statusMap.get(q.id) || "not_started"
+          }));
+        }
+      }
+
+      setQuestions(initialQuestions);
+      if (initialQuestions.length > 0) {
+        setProblemStatement(initialQuestions[0]);
+      }
+    } catch (err: any) {
+      console.error("Failed to load assessment data:", err);
+    }
+  };
   const router = useRouter();
 
   // Fetch Token & Problem Details
@@ -275,6 +373,19 @@ export function InterviewClient({ roomId, username, isInterviewer = false, isRea
               handleEndInterview={handleEndInterview}
               isEnding={isEnding}
               isProcessingFeedback={isProcessingFeedback}
+              assessmentTemplateId={assessmentTemplateId}
+              setAssessmentTemplateId={setAssessmentTemplateId}
+              questions={questions}
+              setQuestions={setQuestions}
+              activeQIdx={activeQIdx}
+              setActiveQIdx={setActiveQIdx}
+              attempt={attempt}
+              setAttempt={setAttempt}
+              handleQuestionSelect={handleQuestionSelect}
+              handleCodeSubmitted={handleCodeSubmitted}
+              fetchAssessmentData={fetchAssessmentData}
+              isTestCandidate={isTestCandidate}
+              setIsTestCandidate={setIsTestCandidate}
             />
           </LiveKitErrorBoundary>
         </LiveKitRoom>
@@ -370,6 +481,23 @@ interface InnerProps {
   handleEndInterview: () => void;
   isEnding: boolean;
   isProcessingFeedback: boolean;
+
+  // Custom assessment props
+  assessmentTemplateId: string | null;
+  setAssessmentTemplateId: (id: string | null) => void;
+  questions: any[];
+  setQuestions: React.Dispatch<React.SetStateAction<any[]>>;
+  activeQIdx: number;
+  setActiveQIdx: (idx: number) => void;
+  attempt: any;
+  setAttempt: (att: any) => void;
+  handleQuestionSelect: (idx: number) => void;
+  handleCodeSubmitted: (questionId: string, status: string) => void;
+  fetchAssessmentData: (templateId: string, candidateId: string) => Promise<void>;
+  
+  // Test Candidate
+  isTestCandidate: boolean;
+  setIsTestCandidate: (val: boolean) => void;
 }
 
 function InterviewRoomContent({
@@ -382,6 +510,20 @@ function InterviewRoomContent({
   handleEndInterview,
   isEnding,
   isProcessingFeedback,
+
+  assessmentTemplateId,
+  setAssessmentTemplateId,
+  questions,
+  setQuestions,
+  activeQIdx,
+  setActiveQIdx,
+  attempt,
+  setAttempt,
+  handleQuestionSelect,
+  handleCodeSubmitted,
+  fetchAssessmentData,
+  isTestCandidate,
+  setIsTestCandidate
 }: InnerProps) {
   const router = useRouter();
   const { localParticipant } = useLocalParticipant();
@@ -1357,6 +1499,15 @@ function InterviewRoomContent({
         setTimeExtendedMinutes(interviewData.time_extended_minutes || 0);
         setScheduledAt(interviewData.scheduled_at);
 
+        if (interviewData.candidate?.email?.includes(".test.")) {
+          setIsTestCandidate(true);
+        }
+
+        if (interviewData.assessment_template_id) {
+          setAssessmentTemplateId(interviewData.assessment_template_id);
+          fetchAssessmentData(interviewData.assessment_template_id, interviewData.candidate_id);
+        }
+
         if (interviewData.session_status === "terminated" || 
             interviewData.session_status === "submitted" || 
             interviewData.session_status === "completed" ||
@@ -2193,6 +2344,17 @@ function InterviewRoomContent({
       // Log submission to telemetry
       await logTelemetry("submission", { remarks: candidateRemarks || "Manual candidate submission" });
       
+      if (assessmentTemplateId && attempt) {
+        const supabase = createClient();
+        await supabase
+          .from("assessment_attempts")
+          .update({
+            status: "completed",
+            completed_at: new Date().toISOString()
+          })
+          .eq("id", attempt.id);
+      }
+
       const res = await autoSubmitInterviewAction(roomId, code, language);
       if (res.error) {
         toast.error("Failed to finalize submission: " + res.error);
@@ -2545,6 +2707,11 @@ function InterviewRoomContent({
                       problem={problemStatement} 
                       onProblemUpdate={setProblemStatement}
                       isInterviewer={isLocalModerator}
+                      assessmentTemplateId={assessmentTemplateId}
+                      questions={questions}
+                      activeQIdx={activeQIdx}
+                      onQuestionSelect={handleQuestionSelect}
+                      attempt={attempt}
                     />
                   </TabsContent>
                   <TabsContent value="code" className="h-full w-full m-0 data-[state=inactive]:hidden min-h-0">
@@ -2554,6 +2721,12 @@ function InterviewRoomContent({
                       isInterviewer={isLocalModerator}
                       isLocked={isLocked}
                       interviewMode={interviewMode}
+                      assessmentTemplateId={assessmentTemplateId}
+                      questions={questions}
+                      activeQIdx={activeQIdx}
+                      onQuestionSelect={handleQuestionSelect}
+                      attempt={attempt}
+                      onCodeSubmitted={handleCodeSubmitted}
                     />
                   </TabsContent>
                   
@@ -3725,6 +3898,11 @@ function InterviewRoomContent({
                       problem={problemStatement} 
                       onProblemUpdate={setProblemStatement}
                       isInterviewer={isLocalModerator}
+                      assessmentTemplateId={assessmentTemplateId}
+                      questions={questions}
+                      activeQIdx={activeQIdx}
+                      onQuestionSelect={handleQuestionSelect}
+                      attempt={attempt}
                     />
                   </TabsContent>
                   <TabsContent value="code" className="h-full w-full m-0 data-[state=inactive]:hidden min-h-0">
@@ -3734,6 +3912,12 @@ function InterviewRoomContent({
                       isInterviewer={isLocalModerator}
                       isLocked={isLocked}
                       interviewMode={interviewMode}
+                      assessmentTemplateId={assessmentTemplateId}
+                      questions={questions}
+                      activeQIdx={activeQIdx}
+                      onQuestionSelect={handleQuestionSelect}
+                      attempt={attempt}
+                      onCodeSubmitted={handleCodeSubmitted}
                     />
                   </TabsContent>
                   {hasScreenShare && (
@@ -4044,7 +4228,7 @@ function InterviewRoomContent({
       )}
 
       {/* Fullscreen Enforced Lockout Overlay (Glassmorphism) */}
-      {!isInterviewer && !isReadOnlyReview && !isLocked && !isFullscreenActive && actualStartedAt && (
+      {!isInterviewer && !isReadOnlyReview && !isLocked && !isFullscreenActive && actualStartedAt && !isTestCandidate && (
         <div className="fixed inset-0 bg-zinc-950/85 backdrop-blur-2xl z-50 flex flex-col items-center justify-center p-6 select-none animate-fade-in text-center">
           {/* Glowing background meshes */}
           <div className="absolute top-1/4 left-1/4 w-96 h-96 bg-red-500/10 rounded-full blur-[120px] pointer-events-none animate-pulse" />

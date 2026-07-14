@@ -292,3 +292,11 @@
 .text-contrast-medium {
   color: var(--muted-foreground) !important;
 }
+
+/* Custom UI Component helpers to prevent Turbopack CSS compilation anomalies */
+.rounded-btn-sm {
+  border-radius: min(var(--radius-md), 12px);
+}
+.rounded-btn-xs {
+  border-radius: min(var(--radius-md), 10px);
+}

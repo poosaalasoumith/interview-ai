@@ -1,7 +1,8 @@
 "use client";
 
 import React, { useState, useEffect, useRef } from "react";
-import { useRouter } from "next/navigation";
+import { useSafeNavigate } from "@/hooks/use-safe-navigate";
+import { Routes } from "@/lib/routes";
 import { useTheme } from "next-themes";
 import { 
   Dialog, 
@@ -35,7 +36,7 @@ interface CommandItem {
 }
 
 export function CommandMenu({ role }: { role: string }) {
-  const router = useRouter();
+  const { safeNavigate } = useSafeNavigate();
   const { theme, setTheme } = useTheme();
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
@@ -51,7 +52,7 @@ export function CommandMenu({ role }: { role: string }) {
         subtitle: "View credentials, select avatar, and customize presence",
         icon: User,
         category: "Account & Settings",
-        action: () => router.push(`/dashboard/${role}/profile`)
+        action: () => safeNavigate(role === "admin" ? Routes.adminProfile : role === "interviewer" ? Routes.interviewerProfile : Routes.candidateProfile)
       },
       {
         id: "settings",
@@ -59,7 +60,7 @@ export function CommandMenu({ role }: { role: string }) {
         subtitle: "Modify Monaco autocomplete, audio/video streaming, and alerts",
         icon: Settings,
         category: "Account & Settings",
-        action: () => router.push(`/dashboard/${role}/settings`)
+        action: () => safeNavigate(role === "admin" ? Routes.adminSettings : role === "interviewer" ? Routes.interviewerSettings : Routes.candidateSettings)
       },
       {
         id: "theme-toggle",
@@ -89,7 +90,7 @@ export function CommandMenu({ role }: { role: string }) {
           subtitle: "View your interview scheduling and feedback scores",
           icon: LayoutDashboard,
           category: "Navigation",
-          action: () => router.push("/dashboard/candidate")
+          action: () => safeNavigate(Routes.candidateOverview)
         },
         {
           id: "cand-interviews",
@@ -97,7 +98,7 @@ export function CommandMenu({ role }: { role: string }) {
           subtitle: "Browse your scheduled LiveKit coding rounds",
           icon: Calendar,
           category: "Navigation",
-          action: () => router.push("/dashboard/candidate/interviews")
+          action: () => safeNavigate(Routes.candidateInterviews)
         },
         {
           id: "cand-practice",
@@ -105,7 +106,7 @@ export function CommandMenu({ role }: { role: string }) {
           subtitle: "Launch autonomous Monaco compiler sandbox",
           icon: Code,
           category: "Navigation",
-          action: () => router.push("/dashboard/candidate/practice")
+          action: () => safeNavigate(Routes.candidatePractice)
         },
         {
           id: "cand-submissions",
@@ -113,7 +114,7 @@ export function CommandMenu({ role }: { role: string }) {
           subtitle: "Review your past Piston compiled code submissions",
           icon: FileCode2,
           category: "Navigation",
-          action: () => router.push("/dashboard/candidate/submissions")
+          action: () => safeNavigate(Routes.candidateSubmissions)
         }
       );
     } else if (role === "interviewer") {
@@ -124,7 +125,7 @@ export function CommandMenu({ role }: { role: string }) {
           subtitle: "Check active rooms and dynamic assessment queues",
           icon: LayoutDashboard,
           category: "Navigation",
-          action: () => router.push("/dashboard/interviewer")
+          action: () => safeNavigate(Routes.interviewerOverview)
         },
         {
           id: "int-schedule",
@@ -132,7 +133,7 @@ export function CommandMenu({ role }: { role: string }) {
           subtitle: "Create a new synchronized interview session lobby",
           icon: Calendar,
           category: "Navigation",
-          action: () => router.push("/dashboard/interviewer/interviews")
+          action: () => safeNavigate(Routes.interviewerInterviews)
         }
       );
     } else if (role === "admin") {
@@ -143,7 +144,7 @@ export function CommandMenu({ role }: { role: string }) {
           subtitle: "Check live telemetry, API status, and usage graphs",
           icon: LayoutDashboard,
           category: "Navigation",
-          action: () => router.push("/dashboard/admin")
+          action: () => safeNavigate(Routes.adminOverview)
         },
         {
           id: "admin-interviews",
@@ -151,7 +152,7 @@ export function CommandMenu({ role }: { role: string }) {
           subtitle: "Audit active coding lobbies and create schedules",
           icon: Calendar,
           category: "Navigation",
-          action: () => router.push("/dashboard/admin/interviews")
+          action: () => safeNavigate(Routes.adminInterviews)
         }
       );
     }
@@ -210,7 +211,7 @@ export function CommandMenu({ role }: { role: string }) {
   const categories = Array.from(new Set(filteredCommands.map(cmd => cmd.category)));
 
   // Flattened absolute index finder for click selection
-  let currentFlattenedIndex = 0;
+  const currentFlattenedIndex = 0;
 
   return (
     <>

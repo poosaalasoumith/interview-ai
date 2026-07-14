@@ -90,7 +90,8 @@ export async function syncAllStaleInterviews() {
     .select(`
       *,
       interview_sessions(duration_minutes)
-    `);
+    `)
+    .not("session_status", "in", '("completed","submitted","expired","terminated","cancelled","canceled")');
 
   if (error || !interviews) {
     return;
@@ -470,6 +471,8 @@ export async function scheduleMultiCandidateInterview(payload: {
   durationMinutes: number;
   notes?: string;
   candidateEmails: string[];
+  assessmentSource?: string;
+  assessmentTemplateId?: string;
 }) {
   const supabase = await createClient();
   const { data: { user } } = await supabase.auth.getUser();
@@ -499,6 +502,8 @@ export async function scheduleMultiCandidateInterview(payload: {
     durationMinutes,
     notes,
     candidateEmails,
+    assessmentSource,
+    assessmentTemplateId,
   } = payload;
 
   if (!candidateEmails || candidateEmails.length === 0) {
@@ -584,7 +589,9 @@ export async function scheduleMultiCandidateInterview(payload: {
         notes,
         room_id: masterRoomId,
         status: "scheduled",
-        problem_statement: problemStatement,
+        problem_statement: assessmentSource === "uploaded" ? null : problemStatement,
+        assessment_source: assessmentSource || 'ai_generated',
+        assessment_template_id: assessmentTemplateId || null,
       }
     ])
     .select()
@@ -637,8 +644,10 @@ export async function scheduleMultiCandidateInterview(payload: {
             interviewer_id: user.id,
             candidate_id: existingUser.id,
             status: "scheduled",
-            problem_statement: problemStatement,
+            problem_statement: assessmentSource === "uploaded" ? null : problemStatement,
             scheduled_at: scheduledAt,
+            assessment_source: assessmentSource || 'ai_generated',
+            assessment_template_id: assessmentTemplateId || null,
           }
         ]);
 
@@ -1037,7 +1046,7 @@ export async function extendInterviewSessionTime(roomId: string, minutes: number
   const newExtendedMinutes = (interview.time_extended_minutes || 0) + minutes;
 
   // Calculate new actual_ended_at if actual_started_at exists
-  let updatePayload: any = {
+  const updatePayload: any = {
     time_extended_minutes: newExtendedMinutes
   };
 

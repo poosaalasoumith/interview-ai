@@ -12,7 +12,7 @@ const ratelimit = new Ratelimit({
 
 export default async function middleware(request: NextRequest) {
   console.log(`[Middleware] Executing for path: ${request.nextUrl.pathname}`);
-  let supabaseResponse = NextResponse.next({
+  const supabaseResponse = NextResponse.next({
     request: {
       headers: request.headers,
     },
@@ -88,12 +88,6 @@ export default async function middleware(request: NextRequest) {
     }
     if (isCandidateRoute && role !== 'candidate') {
       console.log(`[Middleware] Blocked unauthorized access to candidate route: ${path}. Redirecting to /dashboard/${role}`);
-      return NextResponse.redirect(new URL(`/dashboard/${role}`, request.url));
-    }
-
-    // Redirect legacy or duplicate analytics path
-    if (path === '/dashboard/analytics') {
-      console.log(`[Middleware] Redirecting legacy analytics path to /dashboard/${role}`);
       return NextResponse.redirect(new URL(`/dashboard/${role}`, request.url));
     }
   }

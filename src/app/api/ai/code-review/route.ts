@@ -34,7 +34,7 @@ ${code}
 Please review the code.`
     });
 
-    return result.toAIStreamResponse();
+    return result.toTextStreamResponse();
   } catch (error: any) {
     console.error("AI Code Review Error:", error);
     return NextResponse.json({ error: error.message || "Failed to generate review" }, { status: 500 });

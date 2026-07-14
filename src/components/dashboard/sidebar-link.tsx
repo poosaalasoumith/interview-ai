@@ -1,6 +1,6 @@
 "use client";
 
-import Link from "next/link";
+import { SafeLink } from "@/components/ui/safe-link";
 import { usePathname } from "next/navigation";
 import React from "react";
 import { cn } from "@/lib/utils";
@@ -18,7 +18,7 @@ export function SidebarLink({
   const isActive = pathname === href;
 
   return (
-    <Link
+    <SafeLink
       href={href}
       className={cn(
         className,
@@ -28,6 +28,6 @@ export function SidebarLink({
       )}
     >
       {children}
-    </Link>
+    </SafeLink>
   );
 }

@@ -10,6 +10,7 @@ interface CodeEditorProps {
   fontSize?: number;
   minimap?: boolean;
   readOnly?: boolean;
+  onSelectionChange?: (selectedText: string) => void;
 }
 
 export function CodeEditor({ 
@@ -19,13 +20,29 @@ export function CodeEditor({
   fontSize = 14,
   minimap = false,
   readOnly = false,
+  onSelectionChange,
 }: CodeEditorProps) {
   const { theme } = useTheme();
   const [mounted, setMounted] = useState(false);
+  const editorRef = useRef<any>(null);
   
   useEffect(() => {
     setMounted(true);
   }, []);
+
+  const handleEditorDidMount = (editor: any, monaco: any) => {
+    editorRef.current = editor;
+    
+    if (onSelectionChange) {
+      editor.onDidChangeCursorSelection((e: any) => {
+        const model = editor.getModel();
+        if (model) {
+          const selectedText = model.getValueInRange(e.selection);
+          onSelectionChange(selectedText);
+        }
+      });
+    }
+  };
 
   if (!mounted) return null;
 
@@ -37,6 +54,7 @@ export function CodeEditor({
         value={value}
         theme={theme === "dark" ? "vs-dark" : "light"}
         onChange={readOnly ? undefined : onChange}
+        onMount={handleEditorDidMount}
         options={{
           fontSize,
           minimap: { enabled: minimap },
@@ -49,6 +67,7 @@ export function CodeEditor({
           formatOnPaste: true,
           readOnly: readOnly,
           domReadOnly: readOnly,
+          automaticLayout: true,
         }}
         loading={
           <div className="flex h-full items-center justify-center bg-zinc-950">

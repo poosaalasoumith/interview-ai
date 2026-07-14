@@ -70,8 +70,9 @@ export async function GET(req: NextRequest) {
     const now = Date.now();
     const scheduledTime = new Date(interview.scheduled_at).getTime();
 
-    // 2.2 Block if before scheduled start time
-    if (now < scheduledTime && !user?.email?.includes(".test.")) {
+    // 2.2 Block if before scheduled start time (with a 15-minute early join grace period matching waiting lobby window)
+    const gracePeriod = 15 * 60 * 1000;
+    if (now + gracePeriod < scheduledTime && !user?.email?.includes(".test.")) {
       return NextResponse.json(
         { error: "Access Denied: Interview has not started yet" },
         { status: 403 }

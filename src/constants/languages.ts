@@ -6,6 +6,9 @@ export const SUPPORTED_LANGUAGES = [
   { id: "cpp", name: "C++", extension: "cpp", version: "10.2.0" },
   { id: "c", name: "C", extension: "c", version: "10.2.0" },
   { id: "go", name: "Go", extension: "go", version: "1.16.2" },
+  { id: "csharp", name: "C#", extension: "cs", version: "6.12.0" },
+  { id: "rust", name: "Rust", extension: "rs", version: "1.68.2" },
+  { id: "kotlin", name: "Kotlin", extension: "kt", version: "1.8.20" },
 ];
 
 export const LANGUAGE_TEMPLATES: Record<string, string> = {
@@ -54,5 +57,21 @@ import "fmt"
 
 func main() {
     fmt.Println("Hello, World!")
+}`,
+  csharp: `// C# Starter Template
+using System;
+
+public class Program {
+    public static void Main() {
+        Console.WriteLine("Hello, World!");
+    }
+}`,
+  rust: `// Rust Starter Template
+fn main() {
+    println!("Hello, World!");
+}`,
+  kotlin: `// Kotlin Starter Template
+fun main() {
+    println("Hello, World!")
 }`,
 };

@@ -1,6 +1,7 @@
 import { createClient } from "@/utils/supabase/server";
 import { redirect } from "next/navigation";
 import { InterviewClient } from "@/components/interview/interview-client";
+import { AssessmentClient } from "@/components/interview/assessment-client";
 import { CountdownLatch } from "@/components/interview/countdown-latch";
 import { deriveInterviewState } from "@/app/actions/interviews";
 import { isSessionFinalized, getSessionStatusLabel, getSessionEndedMessage, getSessionStatusColor } from "@/utils/interview-utils";
@@ -88,7 +89,13 @@ export default async function InterviewRoomPage({ params }: { params: Promise<{ 
     if (derivedState === "submitted" || derivedState === "completed" || derivedState === "expired") {
       return (
         <main className="flex h-screen flex-col bg-zinc-950 text-white font-sans overflow-hidden">
-          <InterviewClient roomId={roomId} username={username} isInterviewer={isInterviewer} isReadOnlyReview={true} />
+          <InterviewClient 
+            roomId={roomId} 
+            username={username} 
+            isInterviewer={isInterviewer} 
+            isReadOnlyReview={true} 
+            assessmentTemplateId={interview.assessment_template_id}
+          />
         </main>
       );
     }
@@ -123,7 +130,12 @@ export default async function InterviewRoomPage({ params }: { params: Promise<{ 
 
   return (
     <main className="flex h-screen flex-col bg-zinc-950 text-white font-sans overflow-hidden">
-      <InterviewClient roomId={roomId} username={username} isInterviewer={isInterviewer} />
+      <InterviewClient 
+        roomId={roomId} 
+        username={username} 
+        isInterviewer={isInterviewer} 
+        assessmentTemplateId={interview.assessment_template_id}
+      />
     </main>
   );
 }

@@ -8,19 +8,32 @@ import { toast } from "sonner";
 import { useDataChannel } from "@livekit/components-react";
 import { createClient } from "@/utils/supabase/client";
 import { MarkdownRenderer } from "./markdown-renderer";
+import { cn } from "@/lib/utils";
 
 interface ProblemPanelProps {
   interviewId?: string;
   problem?: any;
   onProblemUpdate?: (problem: any) => void;
   isInterviewer?: boolean;
+
+  // Custom assessment props
+  assessmentTemplateId?: string | null;
+  questions?: any[];
+  activeQIdx?: number;
+  onQuestionSelect?: (index: number) => void;
+  attempt?: any;
 }
 
 export function ProblemPanel({ 
   interviewId, 
   problem, 
   onProblemUpdate,
-  isInterviewer = false 
+  isInterviewer = false,
+  assessmentTemplateId = null,
+  questions = [],
+  activeQIdx = 0,
+  onQuestionSelect,
+  attempt
 }: ProblemPanelProps) {
   const [isGenerating, setIsGenerating] = useState(false);
   const [topic, setTopic] = useState("DSA");
@@ -151,6 +164,130 @@ export function ProblemPanel({
               </>
             )}
           </button>
+        </div>
+      </div>
+    );
+  }
+
+  const isCustomAssessment = questions && questions.length > 0;
+
+  if (isCustomAssessment && problem) {
+    return (
+      <div className="h-full bg-zinc-950 text-zinc-300 flex flex-col">
+        <header className="h-12 flex items-center px-6 border-b border-zinc-800 bg-zinc-900/50 backdrop-blur-md shrink-0">
+          <h2 className="font-semibold text-white tracking-wide flex items-center gap-2">
+            <Sparkles className="w-4 h-4 text-primary" />
+            Custom Assessment
+          </h2>
+        </header>
+
+        <div className="flex-1 flex overflow-hidden">
+          {/* Sidebar Question Navigator */}
+          <div className="w-44 bg-zinc-950 border-r border-zinc-900 flex flex-col p-3.5 space-y-3 shrink-0 overflow-y-auto select-none">
+            <span className="text-[9px] font-bold text-zinc-500 tracking-wider uppercase">Challenges</span>
+            <div className="flex-grow flex flex-col gap-2">
+              {questions.map((q, idx) => {
+                const isSelected = idx === activeQIdx;
+                const isSolved = q.status === "solved";
+                const isSubmitted = q.status === "submitted";
+                const isStarted = q.status === "in_progress";
+
+                return (
+                  <button
+                    key={q.id}
+                    type="button"
+                    onClick={() => onQuestionSelect && onQuestionSelect(idx)}
+                    className={cn(
+                      "w-full text-left p-2.5 rounded-xl border text-xs font-semibold transition-all duration-300 flex items-start gap-2 relative group cursor-pointer",
+                      isSelected
+                        ? "bg-primary/10 border-primary text-primary"
+                        : "bg-zinc-900/20 border-zinc-900/60 text-zinc-400 hover:bg-zinc-900/60 hover:text-white"
+                    )}
+                  >
+                    <span className={cn(
+                      "text-[9px] font-black w-4 h-4 rounded-full flex items-center justify-center shrink-0 mt-0.5 transition-colors",
+                      isSelected ? "bg-primary/20 text-primary" : "bg-zinc-800 text-zinc-500"
+                    )}>
+                      {idx + 1}
+                    </span>
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate font-bold tracking-tight">{q.title}</p>
+                      <p className="text-[8px] text-zinc-500 font-medium mt-0.5 flex items-center gap-1 font-mono">
+                        <span>{q.marks} Marks</span>
+                        <span className="opacity-40">•</span>
+                        <span className={cn(
+                          isSolved && "text-emerald-400 font-bold",
+                          isSubmitted && "text-blue-400 font-bold",
+                          isStarted && "text-amber-500 font-bold",
+                          !isSolved && !isSubmitted && !isStarted && "text-zinc-650"
+                        )}>
+                          {isSolved ? "Solved" : isSubmitted ? "Sub" : isStarted ? "Prog" : "New"}
+                        </span>
+                      </p>
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* Active Question Details */}
+          <ScrollArea className="flex-1">
+            <div className="p-6 space-y-6">
+              <div className="space-y-4">
+                <div className="flex items-center gap-3 flex-wrap">
+                  <h1 className="text-2xl font-bold text-white">{problem.title}</h1>
+                  <Badge 
+                    variant="outline" 
+                    className={
+                      problem.difficulty === "Easy" ? "text-green-400 border-green-400/20 bg-green-400/10" :
+                      problem.difficulty === "Medium" ? "text-yellow-400 border-yellow-400/20 bg-yellow-400/10" :
+                      "text-red-400 border-red-400/20 bg-red-400/10"
+                    }
+                  >
+                    {problem.difficulty}
+                  </Badge>
+                </div>
+                
+                <MarkdownRenderer content={problem.description} />
+              </div>
+
+              {problem.constraints && problem.constraints.length > 0 && (
+                <div className="space-y-2">
+                  <h3 className="text-sm font-bold text-white uppercase tracking-wider">Constraints</h3>
+                  <ul className="list-disc list-inside text-xs text-zinc-400 space-y-1 font-mono bg-zinc-900/50 p-4 rounded-lg border border-zinc-800/50">
+                    {problem.constraints.map((constraint: string, idx: number) => (
+                      <li key={idx}>{constraint}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+
+              {problem.examples && problem.examples.length > 0 && (
+                <div className="space-y-4">
+                  <h3 className="text-sm font-bold text-white uppercase tracking-wider">Examples</h3>
+                  {problem.examples.map((ex: any, idx: number) => (
+                    <div key={idx} className="bg-zinc-900 rounded-lg p-4 border border-zinc-800 space-y-2 font-mono text-xs select-text">
+                      <div className="flex gap-2">
+                        <span className="text-zinc-500 font-bold">Input:</span>
+                        <span className="text-zinc-300">{ex.input}</span>
+                      </div>
+                      <div className="flex gap-2">
+                        <span className="text-zinc-500 font-bold">Output:</span>
+                        <span className="text-green-400">{ex.output}</span>
+                      </div>
+                      {ex.explanation && (
+                        <div className="flex gap-2 text-zinc-500 mt-2 pt-2 border-t border-zinc-800/50">
+                          <span>Explanation:</span>
+                          <span>{ex.explanation}</span>
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </ScrollArea>
         </div>
       </div>
     );

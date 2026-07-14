@@ -4,6 +4,9 @@ import "./globals.css";
 import { ThemeProvider } from "@/components/theme-provider";
 import { Toaster } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
+import { runStartupValidation } from "@/lib/startup-validator";
+
+runStartupValidation();
 
 const inter = Inter({ subsets: ["latin"] });
 

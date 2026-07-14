@@ -7,12 +7,30 @@ import { Badge } from "@/components/ui/badge";
 import Link from "next/link";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 
-export default async function ReviewPage({ params }: { params: { id: string } }) {
+import { AssessmentReviewClient } from "@/components/dashboard/assessment-review-client";
+
+export default async function ReviewPage({ params }: { params: Promise<{ id: string }> }) {
+  const { id } = await params;
   const supabase = await createClient();
   const { data: { user } } = await supabase.auth.getUser();
 
   if (!user) {
     redirect("/login");
+  }
+
+  // Fetch the interview details to see if it's assessment-based
+  const { data: interview } = await supabase
+    .from("interviews")
+    .select("assessment_template_id")
+    .eq("id", id)
+    .single();
+
+  if (interview?.assessment_template_id) {
+    return (
+      <div className="container py-8 max-w-6xl mx-auto px-4 md:px-0">
+        <AssessmentReviewClient roomId={id} />
+      </div>
+    );
   }
 
   // Fetch the feedback and related interview details
@@ -24,7 +42,7 @@ export default async function ReviewPage({ params }: { params: { id: string } })
       candidate:candidate_id(name, email, avatar),
       interviewer:interviewer_id(name)
     `)
-    .eq("interview_id", params.id)
+    .eq("interview_id", id)
     .single();
 
   if (error || !feedback) {

@@ -9,6 +9,8 @@ import {
   BreadcrumbPage, 
   BreadcrumbSeparator 
 } from "@/components/ui/breadcrumb";
+import { SafeLink } from "@/components/ui/safe-link";
+import { Routes } from "@/lib/routes";
 
 export function DynamicBreadcrumbs({ role }: { role: string }) {
   const pathname = usePathname();
@@ -50,11 +52,13 @@ export function DynamicBreadcrumbs({ role }: { role: string }) {
     });
   }
 
+  const overviewRoute = role === "admin" ? Routes.adminOverview : role === "interviewer" ? Routes.interviewerOverview : Routes.candidateOverview;
+
   return (
     <Breadcrumb className="hidden md:flex">
       <BreadcrumbList>
         <BreadcrumbItem>
-          <BreadcrumbLink href={`/dashboard/${role}`} className="text-zinc-400 hover:text-zinc-200 capitalize font-medium">
+          <BreadcrumbLink render={<SafeLink href={overviewRoute} />} className="text-zinc-400 hover:text-zinc-200 capitalize font-medium">
             Workspace
           </BreadcrumbLink>
         </BreadcrumbItem>
@@ -65,7 +69,7 @@ export function DynamicBreadcrumbs({ role }: { role: string }) {
               {item.isLast ? (
                 <BreadcrumbPage className="text-zinc-100 font-bold">{item.label}</BreadcrumbPage>
               ) : (
-                <BreadcrumbLink href={item.href} className="text-zinc-400 hover:text-zinc-200 font-medium">
+                <BreadcrumbLink render={<SafeLink href={item.href} />} className="text-zinc-400 hover:text-zinc-200 font-medium">
                   {item.label}
                 </BreadcrumbLink>
               )}

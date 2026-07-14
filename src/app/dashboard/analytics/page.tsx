@@ -3,6 +3,8 @@ import { createServerClient } from "@supabase/ssr";
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 
+import { Routes } from "@/lib/routes";
+
 export default async function AnalyticsPage() {
   const cookieStore = cookies();
   const supabase = createServerClient(
@@ -21,7 +23,7 @@ export default async function AnalyticsPage() {
   const { data: { user } } = await supabase.auth.getUser();
 
   if (!user) {
-    redirect("/auth/login");
+    redirect(Routes.login);
   }
 
   // Fetch feedback/analytics data

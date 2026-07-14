@@ -8,6 +8,8 @@ import { CodeEditor } from "@/components/interview/code-editor";
 import { executeCode, ExecutionResult } from "@/services/piston";
 import { SUPPORTED_LANGUAGES } from "@/constants/languages";
 import { AIReviewModal } from "@/components/interview/ai-review-modal";
+import { WORKSPACE_CONFIGS } from "@/components/interview/practice/workspace-config";
+import { PracticeWorkspace } from "@/components/interview/practice/practice-workspace";
 import { 
   Play, 
   Terminal, 
@@ -44,12 +46,15 @@ import {
   MessageSquare,
   ShieldCheck,
   ChevronLeft,
-  Search
+  Search,
+  Maximize2
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
+import { createClient } from "@/utils/supabase/client";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
+import { useVoiceInterview } from "@/hooks/use-voice-interview";
 
 // Originally Curated Coding Playground Problems
 interface ProblemExample {
@@ -246,230 +251,7 @@ const FALLBACK_QUESTIONS: Record<string, string[]> = {
   ]
 };
 
-interface RecruiterAvatarProps {
-  state: "idle" | "thinking" | "typing" | "speaking";
-  personality: string;
-  userVolume: number;
-  aiVolumeHeights: number[];
-  isUserSpeaking: boolean;
-  interimSubtitleText: string;
-}
 
-function RecruiterAvatar({ state, personality, userVolume, aiVolumeHeights, isUserSpeaking, interimSubtitleText }: RecruiterAvatarProps) {
-  // Blinking loop for eyes
-  const [isBlinking, setIsBlinking] = useState(false);
-  useEffect(() => {
-    const blinkInterval = setInterval(() => {
-      setIsBlinking(true);
-      setTimeout(() => setIsBlinking(false), 150);
-    }, 4500);
-    return () => clearInterval(blinkInterval);
-  }, []);
-
-  // Determine styling based on selected interviewer personality guidelines
-  let themeColor = "rgb(99, 102, 241)"; // default indigo
-  let themeBg = "rgba(99, 102, 241, 0.1)";
-  let coachName = "Sophia";
-  let coachTitle = "Professional Recruiter";
-  let coreStyle = "card-glow-indigo";
-  
-  if (personality === "Friendly") {
-    themeColor = "rgb(16, 185, 129)"; // emerald
-    themeBg = "rgba(16, 185, 129, 0.1)";
-    coachName = "Ava";
-    coachTitle = "HR Conversational Specialist";
-    coreStyle = "card-glow-subtle";
-  } else if (personality === "Aggressive") {
-    themeColor = "rgb(239, 68, 68)"; // crimson
-    themeBg = "rgba(239, 68, 68, 0.1)";
-    coachName = "Marcus";
-    coachTitle = "Aggressive Technical Lead";
-    coreStyle = "card-glow-primary";
-  } else if (personality === "Startup Fast-Paced") {
-    themeColor = "rgb(245, 158, 11)"; // amber
-    themeBg = "rgba(245, 158, 11, 0.1)";
-    coachName = "Leo";
-    coachTitle = "Chaotic Startup Founder";
-    coreStyle = "card-glow-primary";
-  } else if (personality === "FAANG Style") {
-    themeColor = "rgb(168, 85, 247)"; // purple
-    themeBg = "rgba(168, 85, 247, 0.1)";
-    coachName = "Zara";
-    coachTitle = "FAANG Principal Architect";
-    coreStyle = "card-glow-indigo";
-  }
-
-  // Active status text
-  let statusText = `${coachName} is listening...`;
-  if (state === "speaking") statusText = `${coachName} is speaking...`;
-  else if (state === "thinking") statusText = `${coachName} is analyzing...`;
-  else if (isUserSpeaking) statusText = "Receiving candidate voice...";
-  else statusText = `Awaiting response...`;
-
-  return (
-    <Card className={cn("bg-zinc-900 border-zinc-800 shadow-xl overflow-hidden shrink-0 select-none relative pb-4.5", coreStyle)}>
-      {/* Top personality color bar */}
-      <div className="absolute top-0 inset-x-0 h-1 transition-colors duration-500" style={{ backgroundColor: themeColor }} />
-      
-      <div className="p-4.5 flex flex-col items-center justify-center space-y-4 select-none">
-        
-        {/* Animated Avatar Core Visual Canvas */}
-        <div className="relative w-28 h-28 flex items-center justify-center">
-          
-          {/* Pulsing Outer Ring (Reacts to Speech / thinking) */}
-          <div 
-            className={cn(
-              "absolute inset-0 rounded-full border-2 transition-all duration-300 opacity-60",
-              state === "speaking" && "animate-[ping_1.5s_infinite] opacity-30",
-              state === "thinking" && "animate-[spin_4s_linear_infinite] border-dashed"
-            )}
-            style={{ borderColor: themeColor }}
-          />
-
-          {/* Secondary Concentric Ring */}
-          <div 
-            className={cn(
-              "absolute inset-3 rounded-full border transition-all duration-500 opacity-40",
-              state === "speaking" && "scale-105 opacity-80",
-              state === "thinking" && "animate-[spin_2s_linear_infinite] border-dotted"
-            )}
-            style={{ borderColor: themeColor }}
-          />
-
-          {/* Central Animated Recruiter Face/Eye Canvas */}
-          <div 
-            className="w-18 h-18 rounded-2xl border flex flex-col items-center justify-center relative shadow-inner overflow-hidden transition-all duration-500"
-            style={{ backgroundColor: themeBg, borderColor: `${themeColor}40` }}
-          >
-            {/* Blinking Attentive Eye Element (Center) */}
-            <div className="relative w-6 h-6 flex items-center justify-center">
-              {/* Outer Glowing Scanner Ring */}
-              <div 
-                className={cn(
-                  "absolute inset-0 rounded-full border transition-all duration-300",
-                  state === "speaking" && "scale-110",
-                  isUserSpeaking && "animate-ping opacity-70"
-                )}
-                style={{ borderColor: `${themeColor}80` }}
-              />
-              
-              {/* Pupil Eye with Blinking mask */}
-              <div 
-                className={cn(
-                  "w-3.5 transition-all duration-150 rounded-full bg-white relative flex items-center justify-center",
-                  isBlinking ? "h-0.5" : "h-3.5"
-                )}
-              >
-                {/* Pupil Iris Accent */}
-                {!isBlinking && (
-                  <div 
-                    className={cn(
-                      "w-2 h-2 rounded-full transition-transform duration-300",
-                      state === "thinking" && "scale-110 animate-pulse"
-                    )}
-                    style={{ backgroundColor: themeColor }}
-                  />
-                )}
-              </div>
-            </div>
-
-            {/* Glowing Mouth Speaking Sine visualizer */}
-            {state === "speaking" ? (
-              <div className="absolute bottom-3.5 flex items-center gap-0.5 h-3 justify-center w-full">
-                {aiVolumeHeights.slice(0, 5).map((h, i) => (
-                  <div 
-                    key={i} 
-                    className="w-0.5 rounded transition-all duration-75"
-                    style={{ 
-                      height: `${Math.min(100, Math.max(15, h / 3))}%`, 
-                      backgroundColor: themeColor 
-                    }}
-                  />
-                ))}
-              </div>
-            ) : isUserSpeaking ? (
-              <div className="absolute bottom-3 text-[7px] font-mono tracking-wider animate-pulse font-bold" style={{ color: themeColor }}>
-                LISTENING
-              </div>
-            ) : (
-              /* Idle Mouth Line */
-              <div 
-                className="absolute bottom-4 w-5 h-0.5 rounded transition-all duration-500 opacity-60"
-                style={{ backgroundColor: themeColor }}
-              />
-            )}
-          </div>
-        </div>
-
-        {/* Informative Visual Indicators */}
-        <div className="text-center space-y-1 w-full select-text">
-          <span 
-            className="text-[8px] font-black uppercase tracking-wider px-2 py-0.5 rounded-full border inline-flex items-center gap-1.5"
-            style={{ color: themeColor, borderColor: `${themeColor}30`, backgroundColor: `${themeColor}0d` }}
-          >
-            <span className="w-1.5 h-1.5 rounded-full animate-ping" style={{ backgroundColor: themeColor }} />
-            {coachTitle}
-          </span>
-          
-          <h4 className="text-base font-extrabold text-white leading-tight">Coach {coachName}</h4>
-          
-          <p className="text-[10px] text-zinc-500 font-medium tracking-wide mt-1.5 italic transition-all duration-300">
-            {statusText}
-          </p>
-        </div>
-
-        {/* Real-time Subtitles & Live Telemetry stream */}
-        <div className="w-full bg-zinc-950/85 border border-zinc-850 rounded-xl p-3 select-text shadow-inner space-y-2.5">
-          <span className="text-[7px] font-mono font-bold text-zinc-500 uppercase tracking-widest block flex items-center justify-between">
-            <span>Conversational Telemetry (Voice)</span>
-            {isUserSpeaking ? (
-              <span className="text-emerald-450 font-extrabold animate-pulse tracking-wide flex items-center gap-1 uppercase text-[6px] select-none">
-                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-ping inline-block" />
-                dictating...
-              </span>
-            ) : state === "speaking" ? (
-              <span className="text-primary font-extrabold animate-pulse tracking-wide flex items-center gap-1 uppercase text-[6px] select-none">
-                <span className="w-1.5 h-1.5 rounded-full bg-primary animate-ping inline-block" />
-                AI Speaking...
-              </span>
-            ) : (
-              <span className="text-zinc-550 font-bold tracking-wide uppercase text-[6px] flex items-center gap-1 select-none">
-                <span className="w-1 h-1 rounded-full bg-zinc-705 inline-block" />
-                AI Listening...
-              </span>
-            )}
-          </span>
-          
-          <div className="min-h-[40px] flex items-center justify-center">
-            {interimSubtitleText ? (
-            <p className="text-xs text-zinc-200 font-semibold leading-relaxed italic w-full text-left select-text">
-              &ldquo;{interimSubtitleText}&rdquo;
-            </p>
-            ) : (
-              <div className="flex flex-col items-center justify-center space-y-1 text-center py-1 select-none w-full">
-                {isUserSpeaking ? (
-                  <div className="flex items-center gap-0.5 h-3">
-                    {[...Array(5)].map((_, i) => (
-                      <div 
-                        key={i} 
-                        className="w-0.5 bg-emerald-450 rounded animate-[bounce_0.8s_infinite]" 
-                        style={{ animationDelay: `${i * 0.1}s`, height: '100%' }} 
-                      />
-                    ))}
-                  </div>
-                ) : (
-                  <span className="text-[9px] text-zinc-600 font-medium italic animate-pulse tracking-wide">
-                    {state === "speaking" ? "Listening to Coach response..." : "Speak to answer - voice dictation active"}
-                  </span>
-                )}
-              </div>
-            )}
-          </div>
-        </div>
-      </div>
-    </Card>
-  );
-}
 
 export default function PracticePlayground() {
   const [activePlaygroundTab, setActivePlaygroundTab] = useState<"sandbox" | "studio">("studio");
@@ -531,6 +313,7 @@ export default function PracticePlayground() {
   const [selectedDifficulty, setSelectedDifficulty] = useState("Medium");
   const [selectedMode, setSelectedMode] = useState("Timed");
   const [selectedPersonality, setSelectedPersonality] = useState("Professional");
+  const [technicalMode, setTechnicalMode] = useState<"theory" | "coding">("theory");
 
   // Media Calibration Check
   const [hasCameraStream, setHasCameraStream] = useState(false);
@@ -556,54 +339,339 @@ export default function PracticePlayground() {
   const [calibrationError, setCalibrationError] = useState<string | null>(null);
 
   // Enterprise voice synchronization triggers
-  const isAiSpeakingRef = useRef(false);
   const [micInputDetected, setMicInputDetected] = useState(false);
 
   // Live Assessment Session (Room)
-  const [chatLog, setChatLog] = useState<{ sender: "ai" | "user", text: string, timestamp: string }[]>([]);
-  const [aiSpeechState, setAiSpeechState] = useState<"idle" | "thinking" | "typing" | "speaking">("idle");
-  const [currentQuestionsList, setCurrentQuestionsList] = useState<string[]>([]);
-  const [currentQuestionIndex, setCurrentQuestionIndex] = useState(0);
-  const [candidateResponseText, setCandidateResponseText] = useState("");
   const [secondsRemaining, setSecondsRemaining] = useState(900); // 15 mins default
   const [proctorSandboxLogs, setProctorSandboxLogs] = useState<string[]>([]);
+  const [isFullscreenActive, setIsFullscreenActive] = useState(true);
+  const escPressedRef = useRef(false);
   const [difficultyHistory, setDifficultyHistory] = useState<string[]>(["Medium"]);
   const [fillerWordsCount, setFillerWordsCount] = useState(0);
-  const [isDictating, setIsDictating] = useState(false);
-
-  // =========================================================================
-  // NEW AUTONOMOUS ORCHESTRATION STATES & REFS
-  // =========================================================================
-  const [isAutonomousMode, setIsAutonomousMode] = useState(true);
-  const [isUserSpeaking, setIsUserSpeaking] = useState(false);
-  const [interimSubtitleText, setInterimSubtitleText] = useState("");
-  const [silenceCountdown, setSilenceCountdown] = useState<number | null>(null);
-  const [aiSpeechVisualizerHeight, setAiSpeechVisualizerHeight] = useState<number[]>(new Array(12).fill(10));
 
   const isRoomActiveRef = useRef(false);
   const isAutonomousRef = useRef(true);
-  const silenceTimerRef = useRef<any>(null);
-  const countdownIntervalRef = useRef<any>(null);
-  const candidateTextRef = useRef("");
-  const aiSpeechAmplitudeIntervalRef = useRef<any>(null);
-  // Ref to track dictation state without stale closures in async callbacks
-  const isDictatingRef = useRef(false);
-
-  // Sync refs to allow background callbacks to always retrieve fresh variables
-  useEffect(() => {
-    isAutonomousRef.current = isAutonomousMode;
-  }, [isAutonomousMode]);
-
-  useEffect(() => {
-    candidateTextRef.current = candidateResponseText;
-  }, [candidateResponseText]);
+  const startInterviewTriggeredRef = useRef(false);
 
   // Recording snapshots
   const [completedReport, setCompletedReport] = useState<any | null>(null);
+  const [generatedQuestions, setGeneratedQuestions] = useState<any[]>([]);
+  const [isGeneratingQuestions, setIsGeneratingQuestions] = useState(false);
+  const [currentQuestionAttemptCount, setCurrentQuestionAttemptCount] = useState(0);
+
+  const [practiceSessionId, setPracticeSessionId] = useState<string | null>(null);
+  const [sessionSaveStatus, setSessionSaveStatus] = useState<"synced" | "in_memory" | "failed">("synced");
+  const [evaluationDebugLog, setEvaluationDebugLog] = useState<any | null>(null);
+  const [evaluationError, setEvaluationError] = useState<string | null>(null);
+
+  const currentQuestionsList = generatedQuestions.map((q) => q.question);
+
+  // Instantiate our shared voice interview orchestration service hook
+  const {
+    orchestratorState,
+    aiSpeechState,
+    logs: orchestratorTelemetryLogs,
+    chatLog,
+    micVolume: roomMicVolume,
+    interimText: interimSubtitleText,
+    candidateText: candidateResponseText,
+    currentQuestionIndex,
+    diagnostics,
+    setCandidateText: setCandidateResponseText,
+    startInterview,
+    submitCandidateAnswer,
+    handleCandidateAnswerSubmit,
+    orchestrator
+  } = useVoiceInterview(practiceSessionId || "", () => {
+    handleFinishAndGenerateReport();
+  });
+
+  const isDictating = orchestrator?.recognitionManager?.active || false;
+  const isUserSpeaking = roomMicVolume > 0;
+  const silenceCountdown = (orchestratorState === "LISTENING" || orchestratorState === "SPEECH_DETECTED") ? 2 : null;
+  const aiSpeechVisualizerHeight = aiSpeechState === "speaking"
+    ? Array.from({ length: 12 }, () => Math.floor(10 + Math.random() * 45))
+    : new Array(12).fill(10);
+
+  const isDevMode = typeof window !== "undefined" && (process.env.NODE_ENV === "development" || window.location.hostname === "localhost");
+
+  const isCodingOrDesign = selectedRound === "Coding" || 
+    (selectedRound === "Technical" && technicalMode === "coding") || 
+    selectedRound === "System Design";
+
+  // Fullscreen and Sandboxed Proctoring for Practice Room (Tab Switch, Blur, Copy/Paste)
+  useEffect(() => {
+    if (wizardStep !== 2) return;
+    if (!isCodingOrDesign) return;
+
+    // Fullscreen change handler
+    const handleFullscreenChange = () => {
+      const isCurrentlyFullscreen = !!document.fullscreenElement;
+      setIsFullscreenActive(isCurrentlyFullscreen);
+      
+      if (!isCurrentlyFullscreen) {
+        const isEsc = escPressedRef.current;
+        const msg = isEsc
+          ? `⚠️ [PROCTOR] Candidate exited fullscreen using ESC key! (${new Date().toLocaleTimeString()})`
+          : `⚠️ [PROCTOR] Candidate exited fullscreen mode! (${new Date().toLocaleTimeString()})`;
+        setProctorSandboxLogs(prev => [...prev, msg]);
+        escPressedRef.current = false;
+      } else {
+        setProctorSandboxLogs(prev => [...prev, `ℹ_ [PROCTOR] Candidate entered fullscreen mode. (${new Date().toLocaleTimeString()})`]);
+      }
+    };
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        escPressedRef.current = true;
+      }
+    };
+
+    // Tab Switch / Blur detection
+    const handleVisibilityChange = () => {
+      if (document.hidden) {
+        const isMinimized = (window.outerWidth === 0 && window.outerHeight === 0) || !document.hasFocus();
+        const msg = isMinimized
+          ? `⚠️ [PROCTOR] Candidate minimized the assessment window! (${new Date().toLocaleTimeString()})`
+          : `⚠️ [PROCTOR] Candidate switched tabs! (${new Date().toLocaleTimeString()})`;
+        setProctorSandboxLogs(prev => [...prev, msg]);
+      }
+    };
+
+    const handleBlur = () => {
+      const msg = `⚠️ [PROCTOR] Candidate clicked outside the window / lost focus! (${new Date().toLocaleTimeString()})`;
+      setProctorSandboxLogs(prev => [...prev, msg]);
+    };
+
+    // Copy / Paste restriction
+    const handleCopy = (e: ClipboardEvent) => {
+      e.preventDefault();
+      toast.warning("Copying is restricted in this coding assessment!");
+      setProctorSandboxLogs(prev => [...prev, `⚠️ [PROCTOR] Blocked copy attempt! (${new Date().toLocaleTimeString()})`]);
+    };
+
+    const handlePaste = (e: ClipboardEvent) => {
+      e.preventDefault();
+      toast.warning("Pasting is restricted in this coding assessment!");
+      setProctorSandboxLogs(prev => [...prev, `⚠️ [PROCTOR] Blocked paste attempt! (${new Date().toLocaleTimeString()})`]);
+    };
+
+    document.addEventListener("fullscreenchange", handleFullscreenChange);
+    window.addEventListener("keydown", handleKeyDown);
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    window.addEventListener("blur", handleBlur);
+    document.addEventListener("copy", handleCopy);
+    document.addEventListener("paste", handlePaste);
+
+    // Initial sync
+    setIsFullscreenActive(!!document.fullscreenElement);
+
+    return () => {
+      document.removeEventListener("fullscreenchange", handleFullscreenChange);
+      window.removeEventListener("keydown", handleKeyDown);
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+      window.removeEventListener("blur", handleBlur);
+      document.removeEventListener("copy", handleCopy);
+      document.removeEventListener("paste", handlePaste);
+    };
+  }, [wizardStep, isCodingOrDesign]);
+
+  // Helper to upsert practice session (Supabase first, in-memory fallback, localStorage for recovery backup only)
+  const savePracticeSession = async (id: string, updates: Partial<any>) => {
+    const supabase = createClient();
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      
+      const dbRoundName = selectedRound === "Technical"
+        ? (technicalMode === "coding" ? "Technical (Coding)" : "Technical (Theory)")
+        : selectedRound;
+
+      const payload = {
+        id,
+        user_id: user?.id || null,
+        role: selectedRole.name,
+        round: dbRoundName,
+        difficulty: selectedDifficulty,
+        personality: selectedPersonality,
+        questions: updates.questions || generatedQuestions,
+        chat_log: updates.chatLog || chatLog,
+        evaluation: updates.evaluation || completedReport,
+        status: updates.status || "active",
+        error_reason: updates.errorReason || null,
+        updated_at: new Date().toISOString()
+      };
+
+      const { error } = await supabase.from("practice_interviews").upsert(payload);
+      if (error) throw error;
+
+      setSessionSaveStatus("synced");
+      // Clean up localStorage recovery backup once synced/concluded
+      if (updates.status === "completed" || updates.status === "failed") {
+        localStorage.removeItem("practice_recovery_" + id);
+      }
+      return true;
+    } catch (dbError) {
+      const dbRoundName = selectedRound === "Technical"
+        ? (technicalMode === "coding" ? "Technical (Coding)" : "Technical (Theory)")
+        : selectedRound;
+
+      console.warn("Supabase save failed/unavailable, keeping session in-memory:", dbError);
+      setSessionSaveStatus("in_memory");
+      // Store copy in localStorage ONLY as a recovery backup in case of accidental browser refresh
+      localStorage.setItem("practice_recovery_" + id, JSON.stringify({
+        id,
+        role: selectedRole.name,
+        round: dbRoundName,
+        difficulty: selectedDifficulty,
+        personality: selectedPersonality,
+        questions: updates.questions || generatedQuestions,
+        chatLog: updates.chatLog || chatLog,
+        evaluation: updates.evaluation || completedReport,
+        status: updates.status || "active",
+        errorReason: updates.errorReason || null
+      }));
+      return false;
+    }
+  };
+
+  // Manual retry sync function
+  const handleRetryCloudSync = async () => {
+    if (!practiceSessionId) return;
+    toast.loading("Retrying cloud synchronization...", { id: "cloud-sync" });
+    const success = await savePracticeSession(practiceSessionId, {
+      questions: generatedQuestions,
+      chatLog,
+      evaluation: completedReport,
+      status: evaluationError ? "failed" : "completed",
+      errorReason: evaluationError
+    });
+    if (success) {
+      toast.success("Successfully synchronized practice run to the Cloud!", { id: "cloud-sync" });
+    } else {
+      toast.error("Cloud sync failed. The session is still safe in memory.", { id: "cloud-sync" });
+    }
+  };
+
+  // Recover session or load completed report in case of redirect
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      const urlParams = new URLSearchParams(window.location.search);
+      const completedSessionId = urlParams.get("completedSessionId");
+      
+      if (completedSessionId) {
+        const reportStr = localStorage.getItem("practice_completed_report_" + completedSessionId);
+        if (reportStr) {
+          try {
+            const report = JSON.parse(reportStr);
+            setCompletedReport(report);
+            setWizardStep(3); // Go directly to report step
+            
+            // Clean up
+            localStorage.removeItem("practice_completed_report_" + completedSessionId);
+            toast.success("AI Mock evaluation report compiled successfully!");
+            
+            // Clean up URL parameters cleanly
+            const cleanUrl = window.location.protocol + "//" + window.location.host + window.location.pathname;
+            window.history.replaceState({ path: cleanUrl }, "", cleanUrl);
+            return;
+          } catch (e) {
+            console.error("Report parse failed:", e);
+          }
+        }
+      }
+
+      const keys = Object.keys(localStorage);
+      const recoveryKey = keys.find(k => k.startsWith("practice_recovery_"));
+      if (recoveryKey) {
+        try {
+          const recovered = JSON.parse(localStorage.getItem(recoveryKey)!);
+          console.log("Accidental refresh recovery loaded:", recovered);
+          setPracticeSessionId(recovered.id);
+          setGeneratedQuestions(recovered.questions);
+          if (orchestrator) {
+            orchestrator.conversationManager.chatLog = recovered.chatLog || [];
+          }
+          setCompletedReport(recovered.evaluation);
+          setEvaluationError(recovered.errorReason);
+          setSessionSaveStatus("in_memory");
+          toast.info("Active practice session recovered from browser memory.");
+        } catch (e) {}
+      }
+    }
+  }, []);
+
+  const generateMockQuestions = async (role: string, round: string, diff: string, pers: string) => {
+    setIsGeneratingQuestions(true);
+    try {
+      const response = await fetch("/api/ai/mock/questions", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ role, round, difficulty: diff, personality: pers })
+      });
+      let data: any = null;
+      if (response.ok) {
+        data = await response.json();
+      } else {
+        const errData = await response.json().catch(() => ({}));
+        throw new Error(errData.error || `Server responded with status ${response.status}`);
+      }
+      if (data && data.questions && data.questions.length === 3) {
+        setGeneratedQuestions(data.questions);
+        console.log("Dynamically generated questions:", data.questions);
+      } else {
+        throw new Error("Invalid response format: questions array is missing or length is not 3");
+      }
+    } catch (e: any) {
+      console.warn("Failed to generate dynamic questions, falling back to static questions:", e.message || e);
+      
+      // Let the user know we fell back gracefully to static questions
+      if (e.message && (e.message.includes("quota") || e.message.includes("limit") || e.message.includes("status 500"))) {
+        toast.warning("AI rate limit reached. Using pre-configured mock questions for your practice session.");
+      }
+
+      // Normalize round name to match static question registry keys
+      let normalizedRound = round;
+      if (round.toLowerCase().includes("coding")) {
+        normalizedRound = "Coding";
+      } else if (round.toLowerCase().includes("theory") || round.toLowerCase().includes("technical")) {
+        normalizedRound = "Technical";
+      }
+
+      // Flexibly match selected role with static PRACTICE_QUESTIONS keys
+      let roleKey = role;
+      if (!PRACTICE_QUESTIONS[roleKey]) {
+        const keys = Object.keys(PRACTICE_QUESTIONS);
+        const match = keys.find(
+          k => k.toLowerCase().includes(role.toLowerCase()) || 
+               role.toLowerCase().includes(k.toLowerCase()) ||
+               k.replace(/engineer|developer/gi, "").trim().toLowerCase() === role.replace(/engineer|developer/gi, "").trim().toLowerCase()
+        );
+        if (match) roleKey = match;
+      }
+
+      const staticQs = (PRACTICE_QUESTIONS[roleKey] && PRACTICE_QUESTIONS[roleKey][normalizedRound]) 
+        || FALLBACK_QUESTIONS[normalizedRound] 
+        || FALLBACK_QUESTIONS["Warm Up"];
+        
+      const fallbackStructure = staticQs.slice(0, 3).map((q) => ({
+        question: q,
+        idealAnswer: "Ideal response covering the technical requirements of this topic.",
+        keywords: ["technical", "implementation", "architecture"],
+        concepts: ["design", "correctness"],
+        rubric: {
+          beginner: "Weak response with minimal technical terms.",
+          intermediate: "Answers the question but lacks deep specifics.",
+          expert: "Accurate, comprehensive answer with clear concepts."
+        }
+      }));
+      setGeneratedQuestions(fallbackStructure);
+    } finally {
+      setIsGeneratingQuestions(false);
+    }
+  };
   const [isEvaluating, setIsEvaluating] = useState(false);
   const [evaluationStageText, setEvaluationStageText] = useState("");
 
-  const recognitionRef = useRef<any>(null);
   const timerIntervalRef = useRef<any>(null);
 
   // Initialize and load persistent sandboxed data from localStorage
@@ -617,6 +685,58 @@ export default function PracticePlayground() {
       }
       setTotalXP(parseInt(xpStr));
       setStreakDays(parseInt(streakStr));
+    }
+  }, []);
+
+  // Parse URL search parameters for practice session replay context restoration
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      const urlParams = new URLSearchParams(window.location.search);
+      const roleParam = urlParams.get("role");
+      const roundParam = urlParams.get("round");
+      const diffParam = urlParams.get("difficulty");
+      const langParam = urlParams.get("language");
+      
+      if (roleParam && roundParam) {
+        // Pre-configure settings
+        const matchedRole = ROLES.find(r => r.name.toLowerCase() === roleParam.toLowerCase() || r.id === roleParam.toLowerCase());
+        if (matchedRole) {
+          setSelectedRole(matchedRole);
+        }
+        
+        // Clean round names (e.g. "Technical (Coding)" -> "Technical")
+        let roundClean = roundParam;
+        if (roundParam.includes("Technical")) {
+          roundClean = "Technical";
+          if (roundParam.toLowerCase().includes("coding")) {
+            setTechnicalMode("coding");
+          } else {
+            setTechnicalMode("theory");
+          }
+        }
+        
+        setSelectedRound(roundClean);
+        if (diffParam) setSelectedDifficulty(diffParam);
+        if (langParam) setLanguage(langParam.toLowerCase());
+        
+        // Auto-open onboarding wizard and advance to calibration step
+        setWizardStep(1);
+        setSubStep(3);
+        
+        // Generate mock questions for replay
+        generateMockQuestions(
+          matchedRole ? matchedRole.name : roleParam,
+          roundParam,
+          diffParam || "Medium",
+          selectedPersonality
+        );
+        
+        toast.success("Restored practice settings for replay.");
+        
+        // Clear search params cleanly without page refresh
+        const cleanUrl = window.location.protocol + "//" + window.location.host + window.location.pathname;
+        window.history.replaceState({ path: cleanUrl }, "", cleanUrl);
+      }
     }
   }, []);
 
@@ -659,298 +779,25 @@ export default function PracticePlayground() {
       }).catch(e => console.warn("Microphone permissions query unsupported in this browser context."));
     }
 
-    // 3. Listen to window focus regain for automatic speech loop recovery
-    const handleFocusRegain = () => {
-      console.log("Window focused. Restoring speech recognition state...");
-      if (isRoomActiveRef.current && isAutonomousRef.current && !isAiSpeakingRef.current) {
-        restartAutonomousMicrophone();
-      }
-    };
-
-    window.addEventListener("focus", handleFocusRegain);
-
     return () => {
       if (navigator.mediaDevices && navigator.mediaDevices.removeEventListener) {
         navigator.mediaDevices.removeEventListener("devicechange", handleDeviceChange);
       }
       if (camStatus) camStatus.removeEventListener("change", handlePermissionChange);
       if (micStatus) micStatus.removeEventListener("change", handlePermissionChange);
-      window.removeEventListener("focus", handleFocusRegain);
     };
   }, [subStep, wizardStep]);
 
-  // Hoisted Speech loop restart triggers — safely aborts current session and restarts
-  function restartAutonomousMicrophone() {
-    if (!recognitionRef.current) return;
-    // Clear any pending silence timers before restarting
-    if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
-    if (countdownIntervalRef.current) clearInterval(countdownIntervalRef.current);
-    setSilenceCountdown(null);
-    setInterimSubtitleText("");
-
-    try {
-      recognitionRef.current.abort(); // triggers onend → which auto-restarts
-    } catch (e) {}
-    
-    // Fallback: if abort doesn't trigger onend, force-start after delay
-    setTimeout(() => {
-      if (!isRoomActiveRef.current || isAiSpeakingRef.current) return;
-      if (!isDictatingRef.current) {
-        try {
-          recognitionRef.current.start();
-          console.log("[Voice API] Fallback restart triggered.");
-        } catch (err: any) {
-          if (!err.message?.includes("already started")) {
-            console.warn("[Voice API info] Fallback restart suppressed:", err.message);
-          }
-        }
-      }
-    }, 400);
-  }
-
-  // Hoisted VAD Silence timer trigger
-  function resetSilenceDetectionTimer() {
-    if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
-    if (countdownIntervalRef.current) clearInterval(countdownIntervalRef.current);
-    setSilenceCountdown(null);
-
-    if (!isRoomActiveRef.current) return;
-    // Accept any non-empty transcript (final OR interim) to trigger auto-submission
-    const currentText = candidateTextRef.current.trim();
-    if (currentText.length < 1) return;
-
-    let countdownVal = 3;
-    setSilenceCountdown(3);
-
-    countdownIntervalRef.current = setInterval(() => {
-      countdownVal -= 1;
-      if (countdownVal <= 0) {
-        clearInterval(countdownIntervalRef.current);
-        setSilenceCountdown(null);
-      } else {
-        setSilenceCountdown(countdownVal);
-      }
-    }, 1000);
-
-    silenceTimerRef.current = setTimeout(() => {
-      const finalText = candidateTextRef.current.trim();
-      if (finalText.length >= 1) {
-        console.log("[VAD Silence Timer] Automatically submitting response...");
-        submitCandidateAnswer(finalText);
-      }
-    }, 2800);
-  }
-
-  // Web Speech API Microphone Dictation Wrapper (Continuous VAD Loop)
-  useEffect(() => {
-    if (typeof window !== "undefined") {
-      const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
-      if (SpeechRecognition) {
-        const rec = new SpeechRecognition();
-        rec.continuous = true;
-        rec.interimResults = true; // Stream partial transcription letters live
-        rec.lang = "en-US";
-        rec.maxAlternatives = 1;
-        
-        rec.onstart = () => {
-          console.log("[Voice API] Recognition started — continuous listening active.");
-          isDictatingRef.current = true;
-          setIsDictating(true);
-          setIsUserSpeaking(false);
-        };
-
-        rec.onresult = (e: any) => {
-          // Guard: never process results while AI is speaking (feedback prevention)
-          if (isAiSpeakingRef.current) return;
-
-          let interimTranscript = "";
-          let finalTranscript = "";
-          
-          for (let i = e.resultIndex; i < e.results.length; ++i) {
-            if (e.results[i].isFinal) {
-              finalTranscript += e.results[i][0].transcript;
-            } else {
-              interimTranscript += e.results[i][0].transcript;
-            }
-          }
-          
-          if (finalTranscript) {
-            const trimmed = finalTranscript.trim();
-            setCandidateResponseText(prev => {
-              const joined = prev + (prev === "" || prev.endsWith(" ") ? "" : " ") + trimmed;
-              // Keep the ref in sync immediately (don't wait for useEffect)
-              candidateTextRef.current = joined;
-              return joined;
-            });
-            
-            // Count filler words
-            const lower = trimmed.toLowerCase();
-            const fillerMatches = lower.match(/\b(um|like|so|ah|basically|actually)\b/g);
-            if (fillerMatches) {
-              setFillerWordsCount(prev => prev + fillerMatches.length);
-            }
-
-            // Clear interim now that we have a final segment
-            setInterimSubtitleText("");
-          }
-
-          if (interimTranscript) {
-            setInterimSubtitleText(interimTranscript);
-          }
-
-          // Reset the silence countdown whenever ANY speech result arrives
-          resetSilenceDetectionTimer();
-        };
-
-        rec.onspeechstart = () => {
-          setIsUserSpeaking(true);
-          // Clear any pending silence countdowns when user starts speaking again
-          if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
-          if (countdownIntervalRef.current) clearInterval(countdownIntervalRef.current);
-          setSilenceCountdown(null);
-        };
-
-        rec.onspeechend = () => {
-          setIsUserSpeaking(false);
-          // Trigger silence detection after speech ends
-          resetSilenceDetectionTimer();
-        };
-
-        rec.onerror = (e: any) => {
-          const errorType = e && e.error ? e.error : "unknown";
-          
-          // Gracefully ignore standard browser-enforced silence timeouts
-          if (errorType === "no-speech") {
-            console.warn("[Voice API info] No-speech timeout — will auto-restart listener.");
-            // Don't set isDictating false here — onend will handle restart
-            return;
-          }
-          if (errorType === "aborted") {
-            console.warn("[Voice API info] Recognition aborted (expected during AI speech).");
-            return;
-          }
-          if (errorType === "network") {
-            console.warn("[Voice API info] Network interruption — will auto-restart.");
-            return;
-          }
-
-          console.warn("[Voice API warning]", errorType, e);
-          
-          if (errorType === "not-allowed") {
-            toast.error("Microphone permission denied. Please allow mic access in your browser settings.");
-            isDictatingRef.current = false;
-            setIsDictating(false);
-          } else if (errorType === "audio-capture") {
-            toast.error("No microphone hardware found. Please verify hardware setup.");
-            isDictatingRef.current = false;
-            setIsDictating(false);
-          }
-        };
-
-        rec.onend = () => {
-          isDictatingRef.current = false;
-          setIsDictating(false);
-          setIsUserSpeaking(false);
-
-          // Auto-restart if the room is still active and AI is not speaking
-          if (isRoomActiveRef.current && !isAiSpeakingRef.current) {
-            // Small delay to prevent immediate re-start race conditions
-            setTimeout(() => {
-              if (!isRoomActiveRef.current || isAiSpeakingRef.current) return;
-              try {
-                rec.start();
-                // onstart handler sets isDictatingRef and setIsDictating
-                console.log("[Voice API] Auto-restarted continuous recognition loop.");
-              } catch (err: any) {
-                // InvalidStateError means it's already running — safe to ignore
-                if (!err.message?.includes("already started")) {
-                  console.warn("[Voice API info] Auto-restart suppressed:", err.message);
-                }
-              }
-            }, 150);
-          }
-        };
-
-        recognitionRef.current = rec;
-      } else {
-        console.warn("[Voice API] Web Speech API not supported in this browser.");
-        toast.error("Speech recognition is not supported in this browser. Please use Chrome or Edge.");
-      }
-    }
-    return () => {
-      if (recognitionRef.current) {
-        try {
-          recognitionRef.current.abort();
-        } catch (err) {}
-        recognitionRef.current = null;
-      }
-      isDictatingRef.current = false;
-      if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
-      if (countdownIntervalRef.current) clearInterval(countdownIntervalRef.current);
-    };
-  }, []);
-
-  // Web Speech synthesis question voice engine
-  function speakAIUtterance(text: string) {
-    if (typeof window !== "undefined" && window.speechSynthesis) {
-      window.speechSynthesis.cancel(); // Stop overlaps
-      const utterance = new SpeechSynthesisUtterance(text);
-      utterance.rate = 1.05;
-      
-      // Adapt rate & pitch based on custom personality selection
-      if (selectedPersonality === "Friendly") {
-        utterance.rate = 1.1;
-        utterance.pitch = 1.15;
-      } else if (selectedPersonality === "Aggressive") {
-        utterance.rate = 0.95;
-        utterance.pitch = 0.85;
-      } else if (selectedPersonality === "Startup Fast-Paced") {
-        utterance.rate = 1.25;
-        utterance.pitch = 1.05;
-      } else if (selectedPersonality === "FAANG Style") {
-        utterance.rate = 1.0;
-        utterance.pitch = 0.95;
-      }
-
-      utterance.onstart = () => {
-        isAiSpeakingRef.current = true;
-        setAiSpeechState("speaking");
-        
-        // Terminate speech recognition instantly to prevent recording synthetic playback
-        if (recognitionRef.current) {
-          try {
-            recognitionRef.current.abort();
-          } catch (e) {}
-        }
-        setIsDictating(false);
-
-        // Start simulated AI speaking speaker waveform amplitudes
-        if (aiSpeechAmplitudeIntervalRef.current) clearInterval(aiSpeechAmplitudeIntervalRef.current);
-        aiSpeechAmplitudeIntervalRef.current = setInterval(() => {
-          setAiSpeechVisualizerHeight(
-            Array.from({ length: 12 }, () => Math.floor(10 + Math.random() * 45))
-          );
-        }, 120);
-      };
-      
-      utterance.onend = () => {
-        isAiSpeakingRef.current = false;
-        setAiSpeechState("idle");
-        if (aiSpeechAmplitudeIntervalRef.current) clearInterval(aiSpeechAmplitudeIntervalRef.current);
-        setAiSpeechVisualizerHeight(new Array(12).fill(10));
-        
-        // When AI stops speaking, automatically restart the continuous microphone listener in VAD mode!
-        if (isRoomActiveRef.current) {
-          restartAutonomousMicrophone();
-        }
-      };
-      
-      window.speechSynthesis.speak(utterance);
-    }
-  }
+  // Speech loop handlers replaced by the useVoiceInterview orchestrator
 
   // Launch media permissions check with fallback constraint queues and hardware diagnostics
   const startHardwareCalibration = async () => {
+    // Trigger dynamic question generation in the background
+    const resolvedRound = selectedRound === "Technical"
+      ? (technicalMode === "coding" ? "Technical (Coding)" : "Technical (Theory)")
+      : selectedRound;
+    generateMockQuestions(selectedRole.name, resolvedRound, selectedDifficulty, selectedPersonality);
+    
     setWizardStep(1);
     setSubStep(3);
     setDiagMic("checking");
@@ -1113,25 +960,22 @@ export default function PracticePlayground() {
 
   // Triggers Timed / Countdown systems
   function startInterviewRoomSession(questions: string[]) {
-    isRoomActiveRef.current = true;
-    isAiSpeakingRef.current = false;
-    isDictatingRef.current = false;
-
-    // Reset all transcript state
-    candidateTextRef.current = "";
-    setCandidateResponseText("");
-    setInterimSubtitleText("");
-    setSilenceCountdown(null);
-    setIsUserSpeaking(false);
-    setIsDictating(false);
-
     setWizardStep(2);
-    setChatLog([
-      { sender: "ai", text: `Hello! I will be your interviewer today. I have reviewed your target profile for the ${selectedRole.name} position. Today, we will conduct a ${selectedDifficulty} level ${selectedRound} assessment in ${selectedMode} mode under my ${selectedPersonality} guidelines. Let's begin!`, timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) }
-    ]);
+    startInterviewTriggeredRef.current = false;
     
-    setCurrentQuestionsList(questions);
-    setCurrentQuestionIndex(0);
+    // Generate a fresh session ID
+    const sessionId = "practice-" + Math.floor(Math.random() * 10000000);
+    setPracticeSessionId(sessionId);
+    setEvaluationError(null);
+    setEvaluationDebugLog(null);
+    
+    // Save initial session state
+    savePracticeSession(sessionId, {
+      questions: generatedQuestions,
+      chatLog: [],
+      status: "active"
+    });
+
     setDifficultyHistory([selectedDifficulty]);
     setFillerWordsCount(0);
 
@@ -1147,7 +991,7 @@ export default function PracticePlayground() {
         setSecondsRemaining((prev) => {
           if (prev <= 1) {
             clearInterval(timerIntervalRef.current);
-            handleFinishAndGenerateReport();
+            finishSession();
             toast.warning("Practice session timer expired! Auto-generating assessment report.");
             return 0;
           }
@@ -1155,167 +999,50 @@ export default function PracticePlayground() {
         });
       }, 1000);
     }
-
-    // Play greeting vocalizer — mic will auto-start AFTER AI finishes speaking
-    setTimeout(() => {
-      const greeting = `Hello! Let's get started. Here is my first question: ${questions[0]}`;
-      speakAIUtterance(greeting);
-      setChatLog(prev => [
-        ...prev,
-        { sender: "ai", text: `Question 1: ${questions[0]}`, timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) }
-      ]);
-    }, 800);
   }
 
-  // -------------------------------------------------------------------------
-  // Core submission logic — accepts text directly to avoid stale React state
-  // Called from both manual UI submit AND the VAD silence auto-submit timer
-  // -------------------------------------------------------------------------
-  function submitCandidateAnswer(userMsg: string) {
-    if (!userMsg.trim()) return;
+  // Trigger voice interview orchestration on startup
+  useEffect(() => {
+    if (!practiceSessionId || generatedQuestions.length === 0 || wizardStep !== 2) return;
+    if (startInterviewTriggeredRef.current) return;
+    startInterviewTriggeredRef.current = true;
 
-    const timestamp = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-    const trimmedMsg = userMsg.trim();
+    const resolvedRound = selectedRound === "Technical"
+      ? (technicalMode === "coding" ? "Technical (Coding)" : "Technical (Theory)")
+      : selectedRound;
 
-    // Clear transcript state and interim subtitles immediately
-    setCandidateResponseText("");
-    candidateTextRef.current = "";
-    setInterimSubtitleText("");
+    startInterview(generatedQuestions, {
+      role: selectedRole.name,
+      round: resolvedRound,
+      difficulty: selectedDifficulty,
+      personality: selectedPersonality,
+      stream: webcamStreamRef.current
+    });
+  }, [practiceSessionId, generatedQuestions, wizardStep]);
 
-    // Stop recognition during AI thinking phase (will auto-restart after AI speaks)
-    if (isDictatingRef.current && recognitionRef.current) {
-      try { recognitionRef.current.abort(); } catch (e) {}
-      isDictatingRef.current = false;
-      setIsDictating(false);
-    }
+  const goToNextQuestion = () => {
+    orchestrator?.transitionTo("NEXT_QUESTION");
+  };
 
-    // Save response in dialogue stream
-    setChatLog(prev => [
-      ...prev,
-      { sender: "user", text: trimmedMsg, timestamp }
-    ]);
+  const finishSession = () => {
+    orchestrator?.transitionTo("REPORT_GENERATION");
+  };
 
-    // Check if we have more core questions
-    const isFinalQuestion = currentQuestionIndex >= currentQuestionsList.length - 1;
-
-    setAiSpeechState("thinking");
-    
-    setTimeout(() => {
-      // 1. Analyze response length and quality to branch dynamically
-      const answerLength = trimmedMsg.length;
-      let nextQuestion = "";
-      let adaptNotice = "";
-
-      // Adaptive follow-up branching logic
-      if (answerLength < 45) {
-        nextQuestion = `That's a rather short answer. Can you elaborate with a specific experience or dive deeper into the technical mechanics behind that response?`;
-        adaptNotice = "Adaptive Branching: Short answer detected. AI issued a contextual follow-up probing query.";
-        setDifficultyHistory(prev => [...prev, "Easing Complexity"]);
-      } else {
-        if (selectedRound === "Coding" || selectedRound === "Technical") {
-          nextQuestion = `Excellent implementation detail. How would you refactor your architectural patterns to minimize CPU garbage collection and optimize RAM concurrency if data feeds scaled 100x?`;
-          adaptNotice = "Adaptive Branching: Strong technical response. AI dynamically scaled query difficulty up.";
-        } else {
-          nextQuestion = `Very clear explanation of trade-offs. If a strategic partner rejected this project model, what behavioral conflict resolution steps would you coordinate next?`;
-          adaptNotice = "Adaptive Branching: Articulate behavioral response. AI launched deep stakeholder-conflict probe.";
-        }
-        setDifficultyHistory(prev => [...prev, "Harder Focus"]);
-      }
-
-      // 2. Decide if we issue the adaptive follow-up, or route to the next core question
-      const willIssueFollowup = Math.random() > 0.4 && !isFinalQuestion;
-
-      if (willIssueFollowup) {
-        const followUpTimestamp = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-        setChatLog(prev => [
-          ...prev,
-          { sender: "ai", text: `Adaptive Follow-Up: ${nextQuestion}`, timestamp: followUpTimestamp }
-        ]);
-        speakAIUtterance(nextQuestion);
-        toast.info("Dynamic difficulty adaptation active.");
-        setProctorSandboxLogs(prev => [
-          ...prev,
-          `💡 [ADAPTIVE COACH] ${adaptNotice}`
-        ]);
-      } else {
-        const nextIndex = currentQuestionIndex + 1;
-        if (nextIndex < currentQuestionsList.length) {
-          const nextCoreQ = currentQuestionsList[nextIndex];
-          const nextTimestamp = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-          setCurrentQuestionIndex(nextIndex);
-          setChatLog(prev => [
-            ...prev,
-            { sender: "ai", text: `Question ${nextIndex + 1}: ${nextCoreQ}`, timestamp: nextTimestamp }
-          ]);
-          speakAIUtterance(nextCoreQ);
-        } else {
-          handleFinishAndGenerateReport();
-        }
-      }
-    }, 1800); // AI thinking latency simulation
-  }
-
-  // Adaptive Questioning & Probing branching engine — UI button entrypoint
-  function handleCandidateAnswerSubmit() {
-    // Read from ref to get the absolute latest text (avoids stale React state closure)
-    const latestText = candidateTextRef.current.trim() || candidateResponseText.trim();
-    if (!latestText) {
-      toast.error("Response field is empty. Please enter or speak your answer.");
-      return;
-    }
-    submitCandidateAnswer(latestText);
-  }
-
-  // Real-time voice toggles — manual override for push-to-talk button
   const toggleDictation = () => {
-    if (!recognitionRef.current) {
-      toast.error("Speech recognition framework not supported in this browser. Please use Chrome or Edge.");
-      return;
-    }
-    if (isDictatingRef.current) {
-      // Manual pause: abort recognition and mark room as paused
-      try { recognitionRef.current.abort(); } catch (e) {}
-      isDictatingRef.current = false;
-      setIsDictating(false);
+    if (orchestrator?.recognitionManager?.active) {
+      orchestrator.recognitionManager.stop();
       toast.success("Voice recording paused. Click again to resume.");
     } else {
-      // Manual resume: start recognition
-      try {
-        recognitionRef.current.start();
-        // onstart handler will set isDictatingRef and setIsDictating
-        toast.success("Recording voice — speak clearly.");
-      } catch (err: any) {
-        if (!err.message?.includes("already started")) {
-          toast.error("Could not start voice recognition. Please check microphone permissions.");
-          console.warn("[Voice API] toggleDictation start failed:", err.message);
-        }
-      }
+      orchestrator?.recognitionManager?.start();
+      toast.success("Recording voice — speak clearly.");
     }
   };
 
   // Generate SaaS Report Dashboard & curates 7-Day goals
-  function handleFinishAndGenerateReport() {
-    // Mark room as inactive BEFORE aborting recognition (prevents onend auto-restart)
+  async function handleFinishAndGenerateReport(finalChatTranscript?: any[]) {
     isRoomActiveRef.current = false;
-    isAiSpeakingRef.current = false;
-    isDictatingRef.current = false;
-    setIsDictating(false);
-
     if (timerIntervalRef.current) clearInterval(timerIntervalRef.current);
-    if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
-    if (countdownIntervalRef.current) clearInterval(countdownIntervalRef.current);
-    setSilenceCountdown(null);
-    setInterimSubtitleText("");
-
-    // Stop any ongoing speech synthesis
-    if (typeof window !== "undefined" && window.speechSynthesis) {
-      window.speechSynthesis.cancel();
-    }
-    if (aiSpeechAmplitudeIntervalRef.current) clearInterval(aiSpeechAmplitudeIntervalRef.current);
-
-    if (recognitionRef.current) {
-      try { recognitionRef.current.abort(); } catch (e) {}
-    }
+    orchestrator?.destroy();
 
     if (webcamStreamRef.current) {
       webcamStreamRef.current.getTracks().forEach(t => t.stop());
@@ -1323,66 +1050,85 @@ export default function PracticePlayground() {
     }
 
     setIsEvaluating(true);
-    setEvaluationStageText("Auditing communication speech rates...");
+    setEvaluationError(null);
+    setEvaluationDebugLog(null);
+    setEvaluationStageText("Analyzing overall semantic alignment & relevance...");
 
-    setTimeout(() => {
-      setEvaluationStageText("Reviewing algorithmic patterns & runtime complexity...");
-    }, 1000);
+    const stageTimer1 = setTimeout(() => {
+      setEvaluationStageText("Evaluating technical accuracy & factual correctness...");
+    }, 1500);
 
-    setTimeout(() => {
-      setEvaluationStageText("Synthesizing strengths & weaknesses... Finalizing 7-Day study plan...");
-    }, 2000);
+    const stageTimer2 = setTimeout(() => {
+      setEvaluationStageText("Synthesizing comprehensive readiness report...");
+    }, 3000);
 
-    setTimeout(() => {
+    try {
+      const resolvedRoundName = selectedRound === "Technical"
+        ? (technicalMode === "coding" ? "Technical (Coding)" : "Technical (Theory)")
+        : selectedRound;
+
+      const activeTranscript = finalChatTranscript || chatLog;
+      const response = await fetch("/api/ai/mock/evaluate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          role: selectedRole.name,
+          round: resolvedRoundName,
+          difficulty: selectedDifficulty,
+          questions: generatedQuestions,
+          chatLog: activeTranscript,
+          fillerWordsCount
+        })
+      });
+
+      const data = await response.json();
+
+      clearTimeout(stageTimer1);
+      clearTimeout(stageTimer2);
       setIsEvaluating(false);
 
-      // Generate dynamic metrics based on config choices
-      const finalReadiness = Math.floor(72 + Math.random() * 20);
-      const commScore = Math.floor(75 + Math.random() * 20);
-      const codingScore = selectedRound === "Coding" ? Math.floor(65 + Math.random() * 30) : 85;
-      const confidenceScore = Math.min(100, Math.max(50, 95 - (fillerWordsCount * 3)));
-      const problemSolving = Math.floor(70 + Math.random() * 25);
-      const timeManagement = selectedMode === "Pressure" ? 82 : Math.floor(80 + Math.random() * 18);
+      // Phase 5: If evaluation explicitly failed (transcript invalid, LLM parse error, etc.)
+      if (!response.ok || data.success === false) {
+        const errorMsg = data.error || "Evaluation Failed";
+        const errorReason = data.reason || "An unknown error occurred during evaluation.";
+        setEvaluationError(errorMsg + ": " + errorReason);
+        if (data.debugLog) setEvaluationDebugLog(data.debugLog);
+
+        // Save failed status to DB
+        if (practiceSessionId) {
+          savePracticeSession(practiceSessionId, {
+            chatLog: activeTranscript,
+            status: "failed",
+            errorReason: errorMsg + ": " + errorReason
+          });
+        }
+
+        setWizardStep(3);
+        toast.error(errorMsg);
+        return;
+      }
+
+      // Success path: extract evaluation from response
+      const evalData = data.evaluation;
+      if (data.debugLog) setEvaluationDebugLog(data.debugLog);
 
       const targetRoleName = selectedRole.name;
-      
       const newReport = {
-        id: `mock-${Date.now()}`,
+        id: "mock-" + Date.now(),
         date: new Date().toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' }),
         role: targetRoleName,
-        round: selectedRound,
+        round: resolvedRoundName,
         difficulty: selectedDifficulty,
-        readinessScore: finalReadiness,
+        readinessScore: evalData.readinessScore,
         skills: selectedRole.skills,
-        metrics: {
-          communication: commScore,
-          coding: codingScore,
-          confidence: confidenceScore,
-          problemSolving,
-          timeManagement
-        },
-        strengths: [
-          "Demonstrates strong logical decomposition when answering technical metrics.",
-          "Good grasp of system-wide architectural trades and scaling implications.",
-          "Sleek conceptual communication with minimal structural overhead."
-        ],
-        weaknesses: [
-          fillerWordsCount > 4 ? `Relies on speech fillers ("um", "like") during cognitive processing.` : "Could elaborate on edge cases in asynchronous state management.",
-          codingScore < 75 ? "Needs code compilation speed and runtime boundary checks." : "Explain API payload data flow structure out loud prior to building."
-        ],
-        recommendations: [
-          "Practice STAR communication frameworks for behavioral situations.",
-          "Target architectural dynamic partition paradigms and distributed message loops.",
-          selectedRound === "Coding" ? "Work on standard LeetCode recursive trees and hashing patterns." : "Explain complex technical variables concisely to stakeholders."
-        ],
-        improvementPlan: [
-          { day: "Day 1-2", focus: "Algorithmic Partitioning & Data Structures", detail: `Focus strictly on ${selectedRole.skills[0] || 'core skills'} optimization and Big-O runtime maps.` },
-          { day: "Day 3-4", focus: "Architectural Scalability & System Decoupling", detail: "Read up on distributed queues, memory cache evaporations, and concurrent database reads." },
-          { day: "Day 5-6", focus: " STAR Communication Mock Iterations", detail: "Conduct mock runs using timed mode under FAANG personality to minimize filler pauses." },
-          { day: "Day 7", focus: "Final Practice Assessment Studio Run", detail: "Run a pressure behavioral mock simulation to locked readiness metrics." }
-        ],
-        chatTranscript: [...chatLog],
-        fillerWords: fillerWordsCount
+        metrics: evalData.metrics,
+        strengths: evalData.strengths,
+        weaknesses: evalData.weaknesses,
+        recommendations: evalData.recommendations,
+        improvementPlan: evalData.improvementPlan,
+        chatTranscript: activeTranscript,
+        fillerWords: fillerWordsCount,
+        questionsReview: evalData.questionsReview
       };
 
       setCompletedReport(newReport);
@@ -1401,8 +1147,36 @@ export default function PracticePlayground() {
       setPracticeHistory(updatedHistory);
       localStorage.setItem("practice_history", JSON.stringify(updatedHistory));
 
+      // Save completed status to DB
+      if (practiceSessionId) {
+        savePracticeSession(practiceSessionId, {
+          chatLog: activeTranscript,
+          evaluation: newReport,
+          status: "completed"
+        });
+      }
+
       toast.success("AI Feedback Report synthesized! Streaks and XP updated.");
-    }, 3200);
+    } catch (err: any) {
+      clearTimeout(stageTimer1);
+      clearTimeout(stageTimer2);
+      console.error(err);
+      const errorMsg = "Evaluation Failed: " + (err.message || "Network or server error.");
+      setEvaluationError(errorMsg);
+      setIsEvaluating(false);
+      setWizardStep(3);
+
+      // Save failed status to DB
+      if (practiceSessionId) {
+        savePracticeSession(practiceSessionId, {
+          chatLog: finalChatTranscript || chatLog,
+          status: "failed",
+          errorReason: errorMsg
+        });
+      }
+
+      toast.error("Failed to generate AI performance report.");
+    }
   }
 
   function handleStartPracticeWizard() {
@@ -1412,12 +1186,7 @@ export default function PracticePlayground() {
 
   function handleReturnToLobby() {
     isRoomActiveRef.current = false;
-    if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
-    if (countdownIntervalRef.current) clearInterval(countdownIntervalRef.current);
-    setSilenceCountdown(null);
-    if (recognitionRef.current) {
-      try { recognitionRef.current.stop(); } catch (e) {}
-    }
+    orchestrator?.destroy();
 
     if (webcamStreamRef.current) {
       webcamStreamRef.current.getTracks().forEach(t => t.stop());
@@ -1989,6 +1758,33 @@ export default function PracticePlayground() {
                     </div>
                   </div>
 
+                  {/* Technical round sub-mode selector */}
+                  {selectedRound === "Technical" && (
+                    <div className="space-y-2 animate-fade-in">
+                      <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest">Technical Sub-Mode</label>
+                      <div className="grid grid-cols-2 gap-2.5">
+                        {[
+                          { mode: "theory", label: "Theory (OOP, DBMS, OS)", desc: "Conceptual verbal drill" },
+                          { mode: "coding", label: "Coding (DSA & Logic)", desc: "Monaco coding challenge" }
+                        ].map((sub) => (
+                          <div 
+                            key={sub.mode}
+                            onClick={() => setTechnicalMode(sub.mode as "theory" | "coding")}
+                            className={cn(
+                              "p-3 rounded-xl border font-bold text-xs cursor-pointer transition select-none flex flex-col text-left justify-center",
+                              technicalMode === sub.mode 
+                                ? "bg-primary/10 border-primary text-primary" 
+                                : "bg-zinc-950/40 border-zinc-850 hover:border-zinc-800 text-zinc-400 hover:text-zinc-200"
+                            )}
+                          >
+                            <span className="font-bold">{sub.label}</span>
+                            <span className="text-[9px] font-medium text-zinc-500 mt-0.5">{sub.desc}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
                   {/* Difficulty selector */}
                   <div className="space-y-2">
                     <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest">Target Difficulty</label>
@@ -2227,24 +2023,56 @@ export default function PracticePlayground() {
                       <ChevronLeft className="w-4 h-4" /> Go Back
                     </button>
                     <Button 
+                      disabled={isGeneratingQuestions}
                       onClick={() => {
+                        if (isCodingOrDesign && document.documentElement.requestFullscreen) {
+                          document.documentElement.requestFullscreen()
+                            .then(() => setIsFullscreenActive(true))
+                            .catch(err => console.warn("Bypass start fullscreen request failed", err));
+                        }
                         setDiagMic("success");
                         setDiagCam("success");
                         setDiagVad("success");
                         setHasCameraStream(true);
                         setSubStep(4);
                         setTimeout(() => {
-                          const candidateQuestions = (PRACTICE_QUESTIONS[selectedRole.name] && PRACTICE_QUESTIONS[selectedRole.name][selectedRound]) 
-                            || FALLBACK_QUESTIONS[selectedRound] 
-                            || FALLBACK_QUESTIONS["Warm Up"];
+                          const sessionId = "practice-" + Math.floor(Math.random() * 10000000);
+                          const dbRoundName = selectedRound === "Technical"
+                            ? (technicalMode === "coding" ? "Technical (Coding)" : "Technical (Theory)")
+                            : selectedRound;
+
+                          const payload = {
+                            id: sessionId,
+                            role: selectedRole.name,
+                            round: dbRoundName,
+                            difficulty: selectedDifficulty,
+                            personality: selectedPersonality,
+                            questions: generatedQuestions,
+                            chatLog: [],
+                            evaluation: null,
+                            status: "active",
+                            mode: selectedMode,
+                            errorReason: null,
+                            updated_at: new Date().toISOString()
+                          };
+
+                          localStorage.setItem("practice_recovery_" + sessionId, JSON.stringify(payload));
                           
-                          startInterviewRoomSession(candidateQuestions);
+                          const supabase = createClient();
+                          supabase.auth.getUser().then(({ data: { user } }) => {
+                            (payload as any).user_id = user?.id || null;
+                            supabase.from("practice_interviews").upsert(payload).then(({ error }) => {
+                              if (error) console.warn("Supabase initial save failed:", error);
+                            });
+                          });
+
+                          window.location.href = `/practice/interview/${sessionId}`;
                         }, 3000);
                       }}
                       variant="outline"
                       className="border border-zinc-800 text-zinc-400 hover:text-white hover:bg-zinc-900 font-bold text-xs uppercase h-10 px-4 rounded-xl cursor-pointer transition-colors"
                     >
-                      Simulate & Bypass Checks
+                      {isGeneratingQuestions ? "Curating Rubrics..." : "Simulate & Bypass Checks"}
                     </Button>
                   </div>
                   
@@ -2255,22 +2083,60 @@ export default function PracticePlayground() {
                       </span>
                     )}
                     <Button 
-                      disabled={!(diagMic === "success" && diagCam === "success" && diagVad === "success")}
+                      disabled={!(diagMic === "success" && diagCam === "success" && diagVad === "success") || isGeneratingQuestions}
                       onClick={() => {
+                        if (isCodingOrDesign && document.documentElement.requestFullscreen) {
+                          document.documentElement.requestFullscreen()
+                            .then(() => setIsFullscreenActive(true))
+                            .catch(err => console.warn("Lobby start fullscreen request failed", err));
+                        }
                         setSubStep(4);
-                        // Automatic Lobby loader countdown transition before interview starts
                         setTimeout(() => {
-                          // Dynamically fetch questions list
-                          const candidateQuestions = (PRACTICE_QUESTIONS[selectedRole.name] && PRACTICE_QUESTIONS[selectedRole.name][selectedRound]) 
-                            || FALLBACK_QUESTIONS[selectedRound] 
-                            || FALLBACK_QUESTIONS["Warm Up"];
+                          const sessionId = "practice-" + Math.floor(Math.random() * 10000000);
+                          const dbRoundName = selectedRound === "Technical"
+                            ? (technicalMode === "coding" ? "Technical (Coding)" : "Technical (Theory)")
+                            : selectedRound;
+
+                          const payload = {
+                            id: sessionId,
+                            role: selectedRole.name,
+                            round: dbRoundName,
+                            difficulty: selectedDifficulty,
+                            personality: selectedPersonality,
+                            questions: generatedQuestions,
+                            chatLog: [],
+                            evaluation: null,
+                            status: "active",
+                            mode: selectedMode,
+                            errorReason: null,
+                            updated_at: new Date().toISOString()
+                          };
+
+                          localStorage.setItem("practice_recovery_" + sessionId, JSON.stringify(payload));
                           
-                          startInterviewRoomSession(candidateQuestions);
+                          const supabase = createClient();
+                          supabase.auth.getUser().then(({ data: { user } }) => {
+                            (payload as any).user_id = user?.id || null;
+                            supabase.from("practice_interviews").upsert(payload).then(({ error }) => {
+                              if (error) console.warn("Supabase initial save failed:", error);
+                            });
+                          });
+
+                          window.location.href = `/practice/interview/${sessionId}`;
                         }, 3000);
                       }}
                       className="bg-primary hover:bg-primary-hover disabled:bg-zinc-800 disabled:text-zinc-500 disabled:border-zinc-850 font-bold text-xs uppercase h-10 px-5 rounded-xl cursor-pointer"
                     >
-                      Connect Coach Lobby <ChevronRight className="w-3.5 h-3.5 ml-1" />
+                      {isGeneratingQuestions ? (
+                        <>
+                          <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" />
+                          Curating Rubrics...
+                        </>
+                      ) : (
+                        <>
+                          Connect Coach Lobby <ChevronRight className="w-3.5 h-3.5 ml-1" />
+                        </>
+                      )}
                     </Button>
                   </div>
                 </div>
@@ -2309,6 +2175,66 @@ export default function PracticePlayground() {
       {/* ========================================================================= */}
       {wizardStep === 2 && (
         <div className="flex-1 flex flex-col min-h-0 relative select-none animate-fade-in">
+          {/* Fullscreen Enforced Lockout Overlay (Glassmorphism) */}
+          {isCodingOrDesign && !isFullscreenActive && (
+            <div className="absolute inset-0 bg-zinc-950/85 backdrop-blur-2xl z-50 flex flex-col items-center justify-center p-6 select-none animate-fade-in text-center">
+              {/* Glowing background meshes */}
+              <div className="absolute top-1/4 left-1/4 w-96 h-96 bg-red-500/10 rounded-full blur-[120px] pointer-events-none animate-pulse" />
+              <div className="absolute bottom-1/4 right-1/4 w-96 h-96 bg-amber-500/10 rounded-full blur-[120px] pointer-events-none animate-pulse delay-1000" />
+              
+              <div className="bg-zinc-900/80 border border-zinc-800 backdrop-blur-xl rounded-3xl p-8 max-w-md w-full shadow-2xl relative overflow-hidden space-y-6 animate-scale-in border-red-500/20 shadow-red-950/15">
+                {/* Red pulsing glow line at the top */}
+                <div className="absolute top-0 inset-x-0 h-1 bg-gradient-to-r from-red-500 via-amber-500 to-red-500 animate-pulse" />
+                
+                {/* Spinning/pulsing custom warning proctor badge */}
+                <div className="relative w-20 h-20 mx-auto">
+                  <div className="absolute inset-0 rounded-2xl bg-red-500/5 border border-red-500/20 animate-ping opacity-75" />
+                  <div className="absolute -inset-2 rounded-3xl bg-red-500/5 border border-red-500/10 animate-pulse" />
+                  <div className="relative w-20 h-20 rounded-2xl bg-red-500/10 border border-red-500/20 flex items-center justify-center shadow-[0_0_30px_rgba(239,68,68,0.25)]">
+                    <Maximize2 className="w-10 h-10 text-red-500 animate-pulse" />
+                  </div>
+                </div>
+                
+                <div className="space-y-3">
+                  <h2 className="text-2xl font-extrabold text-white tracking-tight">Fullscreen Focus Enforced</h2>
+                  <div className="text-zinc-400 text-sm leading-relaxed font-medium space-y-2">
+                    <p className="text-red-400 font-semibold uppercase text-[10px] tracking-wider animate-pulse">Security Guideline Violation</p>
+                    <p>
+                      Fullscreen mode is required during this practice assessment.
+                    </p>
+                    <p className="text-zinc-300 font-bold text-base mt-1">
+                      Please return to fullscreen immediately.
+                    </p>
+                  </div>
+                </div>
+
+                <Button
+                  onClick={async () => {
+                    try {
+                      if (document.documentElement.requestFullscreen) {
+                        await document.documentElement.requestFullscreen();
+                        setIsFullscreenActive(true);
+                      }
+                    } catch (err) {
+                      toast.error("Failed to enter fullscreen. Please grant browser permissions.");
+                    }
+                  }}
+                  className="w-full bg-red-600 hover:bg-red-500 text-white font-bold uppercase text-xs tracking-widest h-12 rounded-xl shadow-lg shadow-red-950/30 border border-red-500/20 transition-all duration-300 cursor-pointer flex items-center justify-center gap-2 group relative overflow-hidden active:scale-98 animate-pulse hover:animate-none"
+                >
+                  <span className="absolute inset-0 w-full h-full bg-gradient-to-r from-red-500 to-amber-500 opacity-0 group-hover:opacity-100 transition-opacity duration-300" />
+                  <span className="relative flex items-center gap-2">
+                    <Maximize2 className="w-4 h-4 group-hover:scale-110 transition" />
+                    Enter Fullscreen Mode
+                  </span>
+                </Button>
+                
+                <p className="text-[9px] text-zinc-550 font-bold uppercase tracking-wider leading-none">
+                  Exiting fullscreen logs an automated proctoring infraction
+                </p>
+              </div>
+            </div>
+          )}
+
           {/* Guided Hardware Recovery Overlay Modal */}
           {(!hasCameraStream || diagMic !== "success" || diagVad !== "success") && (
             <div className="absolute inset-0 bg-black/90 backdrop-blur-md z-50 flex items-center justify-center p-6 text-center select-none animate-fade-in">
@@ -2390,252 +2316,34 @@ export default function PracticePlayground() {
             </div>
           </div>
 
-          <div className="flex-1 min-h-0 bg-zinc-950 border border-zinc-850 rounded-xl overflow-hidden shadow-2xl">
-            <ResizablePanelGroup orientation="horizontal">
-              {/* Left Column: AI Interrogator, Webcam feed, Anti-Cheat educational companion */}
-              <ResizablePanel defaultSize={35} minSize={25} className="bg-zinc-900/30 border-r border-zinc-850 flex flex-col p-4 gap-4 overflow-y-auto scrollbar-none">
-                
-                {/* Dynamic Conversational AI Recruiter Avatar Panel */}
-                <RecruiterAvatar 
-                  state={aiSpeechState}
-                  personality={selectedPersonality}
-                  userVolume={micVolume}
-                  aiVolumeHeights={aiSpeechVisualizerHeight}
-                  isUserSpeaking={isUserSpeaking}
-                  interimSubtitleText={interimSubtitleText}
-                />
-
-                {/* Camera preview bubble */}
-                <div className="relative rounded-2xl overflow-hidden border border-zinc-800 bg-black aspect-video shrink-0 flex items-center justify-center">
-                  {hasCameraStream ? (
-                    <>
-                      <video 
-                        ref={roomVideoRef} 
-                        autoPlay 
-                        playsInline 
-                        muted 
-                        className="w-full h-full object-cover transform -scale-x-100" 
-                      />
-                      
-                      {/* Live volume & speech activity indicator dock */}
-                      <div className="absolute bottom-3 left-3 right-3 bg-zinc-950/85 backdrop-blur-md border border-zinc-800 rounded-xl px-3 py-2 flex items-center justify-between gap-3 shadow-lg select-none">
-                        <div className="flex items-center gap-2 shrink-0">
-                          <span className={cn(
-                            "w-1.5 h-1.5 rounded-full animate-ping",
-                            isUserSpeaking ? "bg-emerald-500" : "bg-primary"
-                          )} />
-                          <span className="text-[8px] font-black text-zinc-300 tracking-wider uppercase">
-                            {isUserSpeaking ? "Speaking..." : "Microphone Listening..."}
-                          </span>
-                        </div>
-                        
-                        {/* Audio volume bars */}
-                        <div className="flex items-center gap-0.5 flex-1 justify-end h-3">
-                          {[...Array(6)].map((_, idx) => {
-                            const active = micVolume > (idx * 15);
-                            return (
-                              <div 
-                                key={idx}
-                                className={cn(
-                                  "w-1 rounded-full transition-all duration-75",
-                                  active ? (isUserSpeaking ? "bg-emerald-400" : "bg-primary") : "bg-zinc-800"
-                                )}
-                                style={{ 
-                                  height: active ? `${Math.min(100, Math.max(20, (micVolume / 100) * (idx + 1) * 20))}%` : "30%"
-                                }}
-                              />
-                            );
-                          })}
-                        </div>
-                      </div>
-                    </>
-                  ) : (
-                    <div className="flex flex-col items-center text-zinc-650 text-center p-4 space-y-1">
-                      <VideoOff className="w-8 h-8 text-zinc-850" />
-                      <span className="text-[10px] font-bold">Offline Camera</span>
-                      <span className="text-[8px] max-w-[120px]">Real camera feed is required to continue.</span>
-                    </div>
-                  )}
-                  <div className="absolute top-3 left-3 bg-zinc-950/80 backdrop-blur px-2 py-0.5 border border-zinc-800 rounded-lg text-[7px] font-black text-zinc-400 tracking-wider">
-                    CANDIDATE WEBCAM STREAM
-                  </div>
-                </div>
-
-                {/* Anti-cheat compliance simulator tab */}
-                <div className="bg-zinc-950 border border-zinc-850 rounded-2xl p-4 flex-1 min-h-[140px] flex flex-col font-mono text-[9px] text-zinc-400 space-y-1.5 select-text">
-                  <span className="text-[8px] font-bold text-zinc-550 uppercase tracking-wider flex items-center gap-1 select-none">
-                    <Shield className="w-3.5 h-3.5 text-zinc-550" /> Proctor Sandbox Companion Log
-                  </span>
-                  <div className="flex-1 overflow-y-auto space-y-1 custom-scrollbar pr-1">
-                    {proctorSandboxLogs.map((log, lIdx) => (
-                      <p key={lIdx} className={cn(
-                        "leading-relaxed border-b border-zinc-900 pb-1.5 last:border-0",
-                        log.startsWith("⚠️") ? "text-amber-500 font-bold" : "text-zinc-600 font-semibold"
-                      )}>
-                        {log}
-                      </p>
-                    ))}
-                  </div>
-                </div>
-              </ResizablePanel>
-
-              <ResizableHandle className="w-1 bg-zinc-850 hover:bg-primary/50 transition-colors z-10" />
-
-              {/* Right Column: Interaction interface (Monaco editor for Technical/Coding/System design rounds) */}
-              <ResizablePanel defaultSize={65} minSize={35} className="flex flex-col relative bg-zinc-950">
-                {selectedRound === "Coding" || selectedRound === "Technical" || selectedRound === "System Design" ? (
-                  /* MULTIPANEL: MONACO WORKSPACE SYSTEM */
-                  <ResizablePanelGroup orientation="vertical">
-                    <ResizablePanel defaultSize={55} minSize={30} className="flex flex-col">
-                      <div className="h-10 bg-zinc-900 border-b border-zinc-850 px-4 flex items-center justify-between shrink-0">
-                        <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest flex items-center gap-1.5">
-                          <Code2 className="w-3.5 h-3.5 text-primary animate-pulse" />
-                          Coding Arena Workspace
-                        </span>
-                        <div className="flex items-center gap-1.5">
-                          <span className="text-[8px] text-zinc-550 font-mono">Active Round Questions: {currentQuestionIndex + 1} / 3</span>
-                        </div>
-                      </div>
-                      
-                      <div className="flex-grow min-h-0 relative">
-                        <CodeEditor 
-                          language="javascript"
-                          value="// Simulated Mock Assessment Code Snippet\nfunction solution() {\n  // Write your conceptual architectural patterns here\n  \n}"
-                          onChange={() => {}}
-                        />
-                      </div>
-                    </ResizablePanel>
-
-                    <ResizableHandle className="h-1 bg-zinc-850 hover:bg-primary/50 transition-colors" />
-
-                    {/* Dialog Submissions and Text area checks */}
-                    <ResizablePanel defaultSize={45} minSize={20} className="flex flex-col bg-zinc-900/60 p-4 gap-4 overflow-y-auto">
-                      <div className="space-y-1 shrink-0">
-                        <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest block">Candidate Response Canvas</label>
-                        <p className="text-[9px] text-zinc-400">Describe your architectural trades or speak aloud to translate.</p>
-                      </div>
-
-                      <div className="flex-1 min-h-[80px] relative">
-                        <textarea
-                          value={candidateResponseText}
-                          onChange={(e) => setCandidateResponseText(e.target.value)}
-                          placeholder="Type your structured solution details here, or press Push-to-Talk microphone to dictate..."
-                          className="w-full h-full bg-zinc-950 border border-zinc-850 rounded-xl p-4 text-xs text-zinc-300 focus:border-primary outline-none resize-none custom-scrollbar pl-4 select-text"
-                        />
-                      </div>
-
-                      <div className="flex items-center justify-between shrink-0 select-none">
-                        <div className="flex items-center gap-4">
-                          <button
-                            onClick={toggleDictation}
-                            className={cn(
-                              "h-10 px-5 rounded-xl border font-bold text-xs uppercase tracking-wider cursor-pointer flex items-center gap-2 transition duration-300 shadow",
-                              isDictating 
-                                ? "bg-red-500/10 border-red-500/30 text-red-500 animate-pulse hover:bg-red-500/20" 
-                                : "bg-zinc-950 border-zinc-850 text-zinc-400 hover:text-white hover:border-zinc-800"
-                            )}
-                            title="Record speech to text"
-                          >
-                            <Mic className={cn("w-4 h-4", isDictating && "animate-bounce text-red-500")} />
-                            {isDictating ? "Continuous Listening..." : "Push-to-Talk"}
-                          </button>
-
-                          {silenceCountdown !== null && (
-                            <div className="flex items-center gap-1.5 text-[10px] font-mono font-bold text-amber-400 bg-amber-500/10 border border-amber-500/20 px-3 py-1.5 rounded-xl animate-pulse">
-                              <span className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-ping" />
-                              Silence detected! Auto-submitting in {silenceCountdown}s...
-                            </div>
-                          )}
-                        </div>
-
-                        <div className="flex items-center gap-2">
-                          <Button
-                            onClick={handleCandidateAnswerSubmit}
-                            disabled={aiSpeechState === "thinking"}
-                            className="primary-button px-6 h-10 rounded-xl cursor-pointer"
-                          >
-                            Submit Answer <ChevronRight className="w-3.5 h-3.5 ml-1" />
-                          </Button>
-                        </div>
-                      </div>
-                    </ResizablePanel>
-                  </ResizablePanelGroup>
-                ) : (
-                  /* FULL CHAT DIALOG FOR HR/BEHAVIORAL ROUNDS */
-                  <div className="h-full flex flex-col min-h-0 bg-zinc-950/20">
-                    <div className="h-10 bg-zinc-900 border-b border-zinc-850 px-4 flex items-center shrink-0">
-                      <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest flex items-center gap-1.5">
-                        <MessageSquare className="w-3.5 h-3.5 text-zinc-500" />
-                        Conversational Dialog History
-                      </span>
-                    </div>
-
-                    {/* Chat dialog messages bubble log */}
-                    <div className="flex-grow min-h-0 overflow-y-auto p-5 space-y-4 select-text custom-scrollbar">
-                      {chatLog.map((chat, cIdx) => (
-                        <div key={cIdx} className={cn(
-                          "max-w-[80%] flex flex-col gap-1 p-3.5 rounded-2xl text-xs leading-relaxed border transition-all duration-300",
-                          chat.sender === "ai" 
-                            ? "bg-zinc-900/60 border-zinc-850 text-zinc-200 self-start mr-auto rounded-tl-none" 
-                            : "bg-primary/10 border-primary/25 text-primary self-end ml-auto rounded-tr-none shadow-sm"
-                        )}>
-                          <span className="text-[7px] font-mono text-zinc-550 leading-none">
-                            {chat.sender === "ai" ? `Sophia • ${selectedPersonality}` : "You (Candidate)"}
-                          </span>
-                          <p className="font-sans font-medium whitespace-pre-wrap">{chat.text}</p>
-                          <span className="text-[7px] font-mono text-zinc-600 text-right leading-none mt-1">{chat.timestamp}</span>
-                        </div>
-                      ))}
-                    </div>
-
-                    {/* Input controls */}
-                    <div className="p-4 bg-zinc-900/50 border-t border-zinc-850 shrink-0 flex flex-col gap-4 select-none">
-                      <div className="relative flex items-center bg-zinc-950 border border-zinc-850 rounded-xl px-4 py-2 select-text">
-                        <textarea
-                          value={candidateResponseText}
-                          onChange={(e) => setCandidateResponseText(e.target.value)}
-                          placeholder="Dictate using Push-to-Talk or type your STAR response pattern here..."
-                          className="w-full bg-transparent text-xs text-zinc-300 outline-none resize-none h-14 pr-16 custom-scrollbar pl-1"
-                        />
-                        <button
-                          onClick={toggleDictation}
-                          className={cn(
-                            "absolute right-4 top-1/2 -translate-y-1/2 p-2 rounded-lg border transition cursor-pointer shrink-0",
-                            isDictating 
-                              ? "bg-red-500/10 border-red-500/30 text-red-500 animate-pulse" 
-                              : "bg-zinc-900 border-zinc-800 text-zinc-400 hover:text-white"
-                          )}
-                          title="Speak answer"
-                        >
-                          <Mic className="w-3.5 h-3.5" />
-                        </button>
-                      </div>
-
-                      <div className="flex items-center justify-between">
-                        <div className="flex items-center gap-4">
-                          <span className="text-[9px] text-zinc-550 font-mono">Speech filler words: {fillerWordsCount}</span>
-                          
-                          {silenceCountdown !== null && (
-                            <div className="flex items-center gap-1.5 text-[10px] font-mono font-bold text-amber-400 bg-amber-500/10 border border-amber-500/20 px-2.5 py-1 rounded-xl animate-pulse">
-                              <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-ping" />
-                              Auto-progress in {silenceCountdown}s...
-                            </div>
-                          )}
-                        </div>
-                        
-                        <Button
-                          onClick={handleCandidateAnswerSubmit}
-                          disabled={aiSpeechState === "thinking"}
-                          className="primary-button px-6 h-10 rounded-xl cursor-pointer"
-                        >
-                          Submit Response <ChevronRight className="w-3.5 h-3.5 ml-1" />
-                        </Button>
-                      </div>
-                    </div>
-                  </div>
-                )}
-              </ResizablePanel>
-            </ResizablePanelGroup>
+          <div className="flex-1 min-h-0 bg-zinc-950 border border-zinc-850 rounded-xl overflow-hidden shadow-2xl relative">
+            <PracticeWorkspace
+              selectedRound={selectedRound}
+              technicalMode={technicalMode}
+              currentQuestionText={currentQuestionsList[currentQuestionIndex] || ""}
+              currentQuestionIndex={currentQuestionIndex}
+              currentQuestionObj={generatedQuestions[currentQuestionIndex]}
+              chatLog={chatLog}
+              candidateResponseText={candidateResponseText}
+              setCandidateResponseText={setCandidateResponseText}
+              isDictating={isDictating}
+              toggleDictation={toggleDictation}
+              silenceCountdown={silenceCountdown}
+              aiSpeechState={aiSpeechState}
+              handleCandidateAnswerSubmit={handleCandidateAnswerSubmit}
+              submitCandidateAnswer={submitCandidateAnswer}
+              isUserSpeaking={isUserSpeaking}
+              interimSubtitleText={interimSubtitleText}
+              micVolume={roomMicVolume}
+              diagnostics={diagnostics}
+              proctorSandboxLogs={proctorSandboxLogs}
+              hasCameraStream={hasCameraStream}
+              roomVideoRef={roomVideoRef}
+              aiSpeechVisualizerHeight={aiSpeechVisualizerHeight}
+              selectedPersonality={selectedPersonality}
+              onNextQuestion={goToNextQuestion}
+              onFinishSession={finishSession}
+            />
           </div>
         </div>
       )}
@@ -2671,7 +2379,72 @@ export default function PracticePlayground() {
       {/* ========================================================================= */}
       {/* 6. ULTIMATE SaaS PERFORMANCE FEEDBACK REPORT SCREEN                       */}
       {/* ========================================================================= */}
-      {wizardStep === 3 && completedReport && (
+      {/* Evaluation Failed State */}
+      {wizardStep === 3 && !completedReport && evaluationError && (
+        <div className="flex-1 flex flex-col items-center justify-center min-h-0 relative animate-fade-in px-4">
+          <Card className="bg-zinc-900/40 border-zinc-800 shadow-2xl max-w-lg w-full">
+            <CardHeader className="p-6 pb-3 text-center">
+              <div className="w-16 h-16 mx-auto mb-4 rounded-full bg-red-500/10 border border-red-500/20 flex items-center justify-center">
+                <AlertCircle className="w-8 h-8 text-red-400" />
+              </div>
+              <CardTitle className="text-lg font-black text-white">Evaluation Unavailable</CardTitle>
+              <CardDescription className="text-sm text-zinc-400 mt-1">
+                The AI evaluation engine was unable to score your interview session.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="p-6 pt-0 space-y-4">
+              <div className="bg-red-500/5 border border-red-500/15 rounded-xl p-4 text-xs text-red-300 font-medium leading-relaxed">
+                {evaluationError}
+              </div>
+              
+              <div className="flex flex-col sm:flex-row gap-3">
+                <Button
+                  onClick={() => {
+                    setEvaluationError(null);
+                    setWizardStep(0);
+                    setSubStep(1);
+                  }}
+                  className="flex-1 bg-zinc-800 hover:bg-zinc-700 text-white font-bold text-xs uppercase h-10 rounded-xl cursor-pointer"
+                >
+                  <RefreshCw className="w-3.5 h-3.5 mr-1.5" />
+                  Start New Session
+                </Button>
+                
+                {sessionSaveStatus === "in_memory" && (
+                  <Button
+                    onClick={handleRetryCloudSync}
+                    variant="outline"
+                    className="flex-1 border-amber-500/30 text-amber-400 hover:bg-amber-500/10 font-bold text-xs uppercase h-10 rounded-xl cursor-pointer"
+                  >
+                    Retry Cloud Sync
+                  </Button>
+                )}
+              </div>
+            </CardContent>
+          </Card>
+
+          {/* Dev Debug Console for Failed Evaluations */}
+          {isDevMode && evaluationDebugLog && (
+            <details className="mt-6 w-full max-w-3xl">
+              <summary className="cursor-pointer text-[10px] font-mono font-bold text-zinc-500 uppercase tracking-widest hover:text-zinc-300 transition">
+                Developer Debug Console
+              </summary>
+              <div className="mt-2 bg-zinc-950 border border-zinc-800 rounded-xl p-4 space-y-3 text-[10px] font-mono text-zinc-400 overflow-auto max-h-[400px] select-text">
+                <div>
+                  <span className="text-amber-400 font-bold block mb-1">Evaluation Prompt Sent:</span>
+                  <pre className="whitespace-pre-wrap bg-zinc-900/50 p-2.5 rounded-lg border border-zinc-850 text-zinc-500 max-h-[200px] overflow-auto">{evaluationDebugLog.prompt}</pre>
+                </div>
+                <div>
+                  <span className="text-red-400 font-bold block mb-1">Raw LLM Response:</span>
+                  <pre className="whitespace-pre-wrap bg-zinc-900/50 p-2.5 rounded-lg border border-zinc-850 text-zinc-500 max-h-[200px] overflow-auto">{evaluationDebugLog.rawLlmResponse}</pre>
+                </div>
+              </div>
+            </details>
+          )}
+        </div>
+      )}
+
+            {wizardStep === 3 && completedReport && (
         <div className="flex-1 flex flex-col min-h-0 relative animate-fade-in select-text overflow-y-auto pr-1 pb-6 scrollbar-thin">
           {/* Controls bar */}
           <div className="h-14 bg-zinc-900 border border-zinc-800 rounded-2xl px-6 flex items-center justify-between shrink-0 mb-6 select-none shadow">
@@ -2680,12 +2453,29 @@ export default function PracticePlayground() {
               <h3 className="font-extrabold text-sm text-white uppercase tracking-wider">AI Mock Performance Assessment Dashboard</h3>
             </div>
             
-            <Button
-              onClick={handleReturnToLobby}
-              className="bg-zinc-850 hover:bg-zinc-800 text-zinc-300 hover:text-white uppercase font-bold text-[10px] px-5 h-9 rounded-xl border border-zinc-800 transition cursor-pointer"
-            >
-              Exit Dashboard
-            </Button>
+            <div className="flex items-center gap-3">
+              {sessionSaveStatus === "in_memory" && (
+                <Button
+                  onClick={handleRetryCloudSync}
+                  variant="outline"
+                  className="border-amber-500/30 text-amber-400 hover:bg-amber-500/10 font-bold text-[10px] uppercase h-9 px-4 rounded-xl cursor-pointer"
+                >
+                  <RefreshCw className="w-3 h-3 mr-1" />
+                  Sync to Cloud
+                </Button>
+              )}
+              {sessionSaveStatus === "synced" && (
+                <span className="text-[9px] font-mono font-bold text-emerald-400 flex items-center gap-1">
+                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" /> Cloud Synced
+                </span>
+              )}
+              <Button
+                onClick={handleReturnToLobby}
+                className="bg-zinc-850 hover:bg-zinc-800 text-zinc-300 hover:text-white uppercase font-bold text-[10px] px-5 h-9 rounded-xl border border-zinc-800 transition cursor-pointer"
+              >
+                Exit Dashboard
+              </Button>
+            </div>
           </div>
 
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 flex-grow min-h-0">
@@ -2881,6 +2671,122 @@ export default function PracticePlayground() {
                 </Card>
               </div>
 
+              {/* Question-by-Question Evaluation Review */}
+              {completedReport.questionsReview && completedReport.questionsReview.length > 0 && (
+                <Card className="bg-zinc-900/30 border-zinc-850 shadow-md select-text">
+                  <CardHeader className="p-5 pb-2">
+                    <span className="text-[9px] font-bold text-zinc-550 uppercase tracking-widest font-mono">Detailed Question Audit</span>
+                    <CardTitle className="text-sm font-black text-white flex items-center gap-1.5">
+                      <Sparkles className="w-4 h-4 text-amber-500 animate-pulse" />
+                      Question-by-Question Feedback
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent className="p-5 pt-0 space-y-6">
+                    {completedReport.questionsReview.map((review: any, qIdx: number) => (
+                      <div key={qIdx} className="p-4 bg-zinc-950/40 border border-zinc-850 rounded-xl space-y-4">
+                        <div className="flex flex-col md:flex-row md:items-center justify-between gap-2 border-b border-zinc-850 pb-2">
+                          <span className="font-extrabold text-xs text-white uppercase tracking-wider flex items-center gap-2">
+                            <span className="text-primary font-mono text-[10px]">#0{qIdx + 1}</span>
+                            Question Review
+                          </span>
+                          <div className="flex flex-wrap items-center gap-2">
+                            <Badge variant="outline" className="text-[9px] font-bold uppercase bg-zinc-950 text-zinc-400 border-zinc-800">
+                              Difficulty: {review.difficulty || "Medium"}
+                            </Badge>
+                            <Badge className={
+                              "text-[10px] font-extrabold px-2.5 py-0.5 border " +
+                              (review.overall >= 80 
+                                ? "bg-emerald-500/20 text-emerald-400 border-emerald-500/30" 
+                                : review.overall >= 60 
+                                  ? "bg-amber-500/20 text-amber-400 border-amber-500/30" 
+                                  : "bg-red-500/20 text-red-400 border-red-500/30")
+                            }>
+                              Score: {review.overall}%
+                            </Badge>
+                          </div>
+                        </div>
+
+                        <div className="space-y-3 text-xs leading-relaxed">
+                          <div>
+                            <span className="text-zinc-550 font-bold uppercase text-[9px] block tracking-wide font-mono">Question Asked</span>
+                            <p className="text-zinc-200 font-semibold">{review.question}</p>
+                          </div>
+
+                          <div>
+                            <span className="text-zinc-550 font-bold uppercase text-[9px] block tracking-wide font-mono">Your Answer</span>
+                            <p className="text-zinc-300 italic bg-zinc-950/50 p-2.5 rounded-lg border border-zinc-900 select-text">&ldquo;{review.candidateAnswer || "Silent / No Answer"}&rdquo;</p>
+                          </div>
+
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-1">
+                            <div>
+                              <span className="text-zinc-550 font-bold uppercase text-[9px] block tracking-wide font-mono">Expected Answer Key Concepts</span>
+                              <p className="text-zinc-300 bg-zinc-950/30 p-2.5 rounded-lg border border-zinc-900/50">{review.expectedAnswerSummary}</p>
+                            </div>
+                            <div>
+                              <span className="text-zinc-550 font-bold uppercase text-[9px] block tracking-wide font-mono">Suggested Model Response</span>
+                              <p className="text-zinc-300 bg-zinc-950/30 p-2.5 rounded-lg border border-zinc-900/50 font-medium">{review.recommended_answer}</p>
+                            </div>
+                          </div>
+
+                          <div className="grid grid-cols-2 md:grid-cols-5 gap-3 pt-2 text-[10px] font-mono border-t border-zinc-900">
+                            <div className="flex flex-col">
+                              <span className="text-zinc-500">Relevance</span>
+                              <span className={"font-bold " + (review.relevance >= 80 ? "text-emerald-400" : review.relevance >= 50 ? "text-amber-400" : "text-red-400")}>{review.relevance}%</span>
+                            </div>
+                            <div className="flex flex-col">
+                              <span className="text-zinc-500">Technical Accuracy</span>
+                              <span className={"font-bold " + (review.technical_accuracy >= 80 ? "text-emerald-400" : review.technical_accuracy >= 50 ? "text-amber-400" : "text-red-400")}>{review.technical_accuracy}%</span>
+                            </div>
+                            <div className="flex flex-col">
+                              <span className="text-zinc-500">Completeness</span>
+                              <span className={"font-bold " + (review.completeness >= 80 ? "text-emerald-400" : review.completeness >= 50 ? "text-amber-400" : "text-red-400")}>{review.completeness}%</span>
+                            </div>
+                            <div className="flex flex-col">
+                              <span className="text-zinc-500">Reasoning</span>
+                              <span className={"font-bold " + (review.reasoning >= 80 ? "text-emerald-400" : review.reasoning >= 50 ? "text-amber-400" : "text-red-400")}>{review.reasoning}%</span>
+                            </div>
+                            <div className="flex flex-col col-span-2 md:col-span-1">
+                              <span className="text-zinc-500">Communication</span>
+                              <span className={"font-bold " + (review.communication >= 80 ? "text-emerald-400" : review.communication >= 50 ? "text-amber-400" : "text-red-400")}>{review.communication}%</span>
+                            </div>
+                          </div>
+
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-2 border-t border-zinc-900 select-text">
+                            {review.strengths && review.strengths.length > 0 && (
+                              <div className="space-y-1">
+                                <span className="text-emerald-450 font-bold uppercase text-[9px] block tracking-wide font-mono flex items-center gap-1">
+                                  <span className="w-1 h-1 rounded-full bg-emerald-500" /> Key Strengths
+                                </span>
+                                <ul className="list-disc pl-4 space-y-1 text-zinc-350 text-[11px]">
+                                  {review.strengths.map((str: string, sIdx: number) => (
+                                    <li key={sIdx}>{str}</li>
+                                  ))}
+                                </ul>
+                              </div>
+                            )}
+                            {((review.mistakes && review.mistakes.length > 0) || (review.missing_topics && review.missing_topics.length > 0)) && (
+                              <div className="space-y-1">
+                                <span className="text-red-400 font-bold uppercase text-[9px] block tracking-wide font-mono flex items-center gap-1">
+                                  <span className="w-1 h-1 rounded-full bg-red-500" /> Mistakes & Missed Concepts
+                                </span>
+                                <ul className="list-disc pl-4 space-y-1 text-zinc-350 text-[11px]">
+                                  {review.mistakes?.map((mst: string, mIdx: number) => (
+                                    <li key={"m-" + mIdx} className="text-red-300">{mst}</li>
+                                  ))}
+                                  {review.missing_topics?.map((concept: string, cIdx: number) => (
+                                    <li key={"c-" + cIdx}>Missed concept: <span className="font-semibold text-zinc-300">{concept}</span></li>
+                                  ))}
+                                </ul>
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </CardContent>
+                </Card>
+              )}
+
               {/* Target practice recommendations */}
               <Card className="bg-zinc-900/20 border-zinc-850 shadow">
                 <CardHeader className="p-5 pb-2">
@@ -2927,6 +2833,39 @@ export default function PracticePlayground() {
                   </div>
                 </CardContent>
               </Card>
+
+              {/* Developer Debug Console (Dev Mode Only) */}
+              {isDevMode && evaluationDebugLog && (
+                <Card className="bg-zinc-950/60 border-zinc-800 shadow-md select-text">
+                  <CardHeader className="p-5 pb-2">
+                    <span className="text-[9px] font-bold text-amber-500 uppercase tracking-widest font-mono">Development Mode Only</span>
+                    <CardTitle className="text-sm font-black text-white flex items-center gap-1.5">
+                      <Terminal className="w-4 h-4 text-amber-400" />
+                      Evaluation Debug Console
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent className="p-5 pt-0 space-y-4">
+                    <details>
+                      <summary className="cursor-pointer text-[10px] font-mono font-bold text-zinc-500 uppercase tracking-widest hover:text-zinc-300 transition">
+                        Evaluation Prompt
+                      </summary>
+                      <pre className="mt-2 whitespace-pre-wrap bg-zinc-900/50 p-3 rounded-lg border border-zinc-850 text-[10px] font-mono text-zinc-500 max-h-[300px] overflow-auto">{evaluationDebugLog.prompt}</pre>
+                    </details>
+                    <details>
+                      <summary className="cursor-pointer text-[10px] font-mono font-bold text-zinc-500 uppercase tracking-widest hover:text-zinc-300 transition">
+                        Raw LLM Response
+                      </summary>
+                      <pre className="mt-2 whitespace-pre-wrap bg-zinc-900/50 p-3 rounded-lg border border-zinc-850 text-[10px] font-mono text-zinc-500 max-h-[300px] overflow-auto">{evaluationDebugLog.rawLlmResponse}</pre>
+                    </details>
+                    <details>
+                      <summary className="cursor-pointer text-[10px] font-mono font-bold text-zinc-500 uppercase tracking-widest hover:text-zinc-300 transition">
+                        Parsed JSON
+                      </summary>
+                      <pre className="mt-2 whitespace-pre-wrap bg-zinc-900/50 p-3 rounded-lg border border-zinc-850 text-[10px] font-mono text-zinc-500 max-h-[300px] overflow-auto">{JSON.stringify(evaluationDebugLog.parsedJson, null, 2)}</pre>
+                    </details>
+                  </CardContent>
+                </Card>
+              )}
 
               {/* Recording Replay Chat Transcript */}
               <Card className="bg-zinc-900/30 border-zinc-850 shadow-md select-text">

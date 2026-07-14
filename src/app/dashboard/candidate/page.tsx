@@ -5,7 +5,8 @@ import { CandidateChart } from "@/components/dashboard/candidate-chart";
 import { CandidateScheduleClient } from "@/components/dashboard/candidate-schedule-client";
 import { buttonVariants } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
-import Link from "next/link";
+import { SafeLink } from "@/components/ui/safe-link";
+import { Routes } from "@/lib/routes";
 import { redirect } from "next/navigation";
 import { syncAllStaleInterviews } from "@/app/actions/interviews";
 import { isSessionFinalized } from "@/utils/interview-utils";
@@ -82,13 +83,13 @@ export default async function CandidateDashboard() {
           </h1>
           <p className="text-muted-foreground mt-1">Here's an overview of your upcoming technical rounds and overall performance.</p>
         </div>
-        <Link 
-          href="/dashboard/candidate/practice"
+        <SafeLink 
+          href={Routes.candidatePractice}
           className={cn(buttonVariants({ variant: "default" }), "w-fit bg-primary hover:bg-primary/90 text-primary-foreground shadow-lg shadow-primary/20 cursor-pointer")}
         >
           <Code className="w-4 h-4 mr-2" />
           Practice Coding
-        </Link>
+        </SafeLink>
       </div>
 
       {liveInterviews.length > 0 && (
@@ -109,13 +110,13 @@ export default async function CandidateDashboard() {
               with <span className="font-medium text-white">{liveInterviews[0].interviewer?.name || "Guest Interviewer"}</span> • Session is active and waiting for your participation.
             </p>
           </div>
-          <Link
-            href={`/interview/${liveInterviews[0].id}`}
+          <SafeLink
+            href={Routes.interview(liveInterviews[0].id)}
             className={cn(buttonVariants({ variant: "secondary" }), "font-black text-xs h-9 px-5 bg-white text-violet-750 hover:bg-zinc-100 cursor-pointer shadow-lg shrink-0 z-10")}
           >
             <Play className="w-3.5 h-3.5 mr-1.5 fill-current" />
             Enter Active Interview Room
-          </Link>
+          </SafeLink>
         </div>
       )}
 

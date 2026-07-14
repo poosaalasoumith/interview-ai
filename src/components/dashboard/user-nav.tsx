@@ -16,7 +16,8 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { signOut } from "@/app/actions/auth";
 import { User as UserIcon, Settings, LogOut, Code } from "lucide-react";
-import Link from "next/link";
+import { SafeLink } from "@/components/ui/safe-link";
+import { Routes } from "@/lib/routes";
 
 interface UserNavProps {
   user: any;
@@ -32,6 +33,8 @@ export function UserNav({ user, role }: UserNavProps) {
 
   // Standardize the dashboard URL path prefix based on the user role
   const rolePath = role === "interviewer" ? "interviewer" : role === "admin" ? "admin" : "candidate";
+  const profileRoute = rolePath === "admin" ? Routes.adminProfile : rolePath === "interviewer" ? Routes.interviewerProfile : Routes.candidateProfile;
+  const settingsRoute = rolePath === "admin" ? Routes.adminSettings : rolePath === "interviewer" ? Routes.interviewerSettings : Routes.candidateSettings;
 
   return (
     <DropdownMenu>
@@ -62,7 +65,7 @@ export function UserNav({ user, role }: UserNavProps) {
         <DropdownMenuSeparator className="bg-zinc-800" />
         <DropdownMenuGroup className="space-y-0.5">
           <DropdownMenuItem
-            render={<Link href={`/dashboard/${rolePath}/profile`} />}
+            render={<SafeLink href={profileRoute} />}
             className="w-full cursor-pointer focus:bg-zinc-800 focus:text-white transition-colors py-2 flex items-center group/dropdown-menu-item"
           >
             <UserIcon className="mr-2.5 h-4 w-4 text-zinc-400 group-hover/dropdown-menu-item:text-primary group-focus/dropdown-menu-item:text-primary transition-colors" />
@@ -70,7 +73,7 @@ export function UserNav({ user, role }: UserNavProps) {
           </DropdownMenuItem>
           {rolePath === 'candidate' && (
             <DropdownMenuItem
-              render={<Link href="/dashboard/candidate/submissions" />}
+              render={<SafeLink href={Routes.candidateSubmissions} />}
               className="w-full cursor-pointer focus:bg-zinc-800 focus:text-white transition-colors py-2 flex items-center group/dropdown-menu-item"
             >
               <Code className="mr-2.5 h-4 w-4 text-zinc-400 group-hover/dropdown-menu-item:text-primary group-focus/dropdown-menu-item:text-primary transition-colors" />
@@ -78,7 +81,7 @@ export function UserNav({ user, role }: UserNavProps) {
             </DropdownMenuItem>
           )}
           <DropdownMenuItem
-            render={<Link href={`/dashboard/${rolePath}/settings`} />}
+            render={<SafeLink href={settingsRoute} />}
             className="w-full cursor-pointer focus:bg-zinc-800 focus:text-white transition-colors py-2 flex items-center group/dropdown-menu-item"
           >
             <Settings className="mr-2.5 h-4 w-4 text-zinc-400 group-hover/dropdown-menu-item:text-primary group-focus/dropdown-menu-item:text-primary transition-colors" />

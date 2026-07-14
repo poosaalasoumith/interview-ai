@@ -7,13 +7,36 @@ import { buttonVariants } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import Link from "next/link";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { AssessmentReviewClient } from "@/components/dashboard/assessment-review-client";
 
-export default async function CandidateReviewPage({ params }: { params: { id: string } }) {
+export default async function CandidateReviewPage({ params }: { params: Promise<{ id: string }> }) {
+  const resolvedParams = await params;
+  const id = resolvedParams.id;
   const supabase = await createClient();
   const { data: { user } } = await supabase.auth.getUser();
 
   if (!user) {
     redirect("/login");
+  }
+
+  // Fetch the interview details to see if it's assessment-based
+  const { data: interview } = await supabase
+    .from("interviews")
+    .select("assessment_template_id")
+    .eq("id", id)
+    .single();
+
+  if (interview?.assessment_template_id) {
+    return (
+      <div className="container py-8 max-w-6xl mx-auto px-4 md:px-0">
+        <div className="mb-4">
+          <Link href="/dashboard/candidate/submissions" className="text-xs text-primary hover:underline flex items-center gap-1 font-bold">
+            ← Back to Submission History
+          </Link>
+        </div>
+        <AssessmentReviewClient roomId={id} />
+      </div>
+    );
   }
 
   // Fetch the feedback and related interview details securely (RLS restricts to owned records, but we filter by candidate_id for safety)
@@ -24,7 +47,7 @@ export default async function CandidateReviewPage({ params }: { params: { id: st
       interview:interview_id(title, scheduled_at, problem_statement),
       interviewer:interviewer_id(name, email, avatar)
     `)
-    .eq("interview_id", params.id)
+    .eq("interview_id", id)
     .eq("candidate_id", user.id)
     .single();
 

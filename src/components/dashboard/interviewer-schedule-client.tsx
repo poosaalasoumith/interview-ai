@@ -24,7 +24,12 @@ import {
   Eye,
   Copy,
   ChevronRight,
-  Info
+  Info,
+  FileText,
+  Loader2,
+  UploadCloud,
+  Edit3,
+  Settings
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -47,6 +52,7 @@ import { toast } from "sonner";
 import Link from "next/link";
 import { cn } from "@/lib/utils";
 import { isSessionFinalized, getSessionStatusLabel, getSessionStatusBadgeClasses } from "@/utils/interview-utils";
+import { createClient } from "@/utils/supabase/client";
 
 interface Candidate {
   id: string;
@@ -136,6 +142,29 @@ export function InterviewerScheduleClient({
   const [searchQuery, setSearchQuery] = useState("");
   const [isPending, startTransition] = useTransition();
 
+  // Custom Assessment Source States
+  const [assessmentSource, setAssessmentSource] = useState<"ai_generated" | "uploaded">("ai_generated");
+  const [parsingStatus, setParsingStatus] = useState<"idle" | "uploading" | "parsing" | "success" | "failed">("idle");
+  const [uploadProgress, setUploadProgress] = useState(0);
+  const [parsedTemplate, setParsedTemplate] = useState<any>(null);
+  const [assessmentTemplateId, setAssessmentTemplateId] = useState<string | null>(null);
+  const [isEditorOpen, setIsEditorOpen] = useState(false);
+  const [activeQuestionIdx, setActiveQuestionIdx] = useState(0);
+  const [parsingError, setParsingError] = useState("");
+
+  // Temp editing question states
+  const [editQTitle, setEditQTitle] = useState("");
+  const [editQDesc, setEditQDesc] = useState("");
+  const [editQDiff, setEditQDiff] = useState("Medium");
+  const [editQMarks, setEditQMarks] = useState(10);
+  const [editQTags, setEditQTags] = useState("");
+  const [editQCodeJS, setEditQCodeJS] = useState("");
+  const [editQCodePy, setEditQCodePy] = useState("");
+  const [editQCodeJava, setEditQCodeJava] = useState("");
+  const [editQCodeCpp, setEditQCodeCpp] = useState("");
+  const [editQTestcases, setEditQTestcases] = useState<any[]>([]);
+  const [editQDeletedTcIds, setEditQDeletedTcIds] = useState<string[]>([]);
+
   // Simulated Email Logs State
   const [simulatedEmails, setSimulatedEmails] = useState<SimulatedEmail[]>([]);
   const [selectedEmail, setSelectedEmail] = useState<SimulatedEmail | null>(null);
@@ -151,6 +180,217 @@ export function InterviewerScheduleClient({
   const [timezone, setTimezone] = useState("UTC");
   const [durationMinutes, setDurationMinutes] = useState(60);
   const [notes, setNotes] = useState("");
+
+  // Handler for custom document upload
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    if (file.size > 10 * 1024 * 1024) {
+      toast.error("File exceeds maximum 10MB size limit.");
+      return;
+    }
+
+    const fileExtension = file.name.split(".").pop()?.toLowerCase();
+    const validExtensions = ["pdf", "docx", "md", "txt"];
+    if (!validExtensions.includes(fileExtension || "")) {
+      toast.error("Unsupported file format. Please upload PDF, DOCX, Markdown (.md), or plain text (.txt).");
+      return;
+    }
+
+    setParsingStatus("uploading");
+    setUploadProgress(20);
+    setParsingError("");
+
+    try {
+      const formData = new FormData();
+      formData.append("file", file);
+
+      setUploadProgress(50);
+      setParsingStatus("parsing");
+
+      const response = await fetch("/api/assessments/parse", {
+        method: "POST",
+        body: formData
+      });
+
+      setUploadProgress(90);
+
+      const data = await response.json();
+      if (!response.ok || data.error) {
+        throw new Error(data.error || "Parsing failed");
+      }
+
+      setUploadProgress(100);
+      setParsingStatus("success");
+      setAssessmentTemplateId(data.templateId);
+      
+      const supabase = createClient();
+      const { data: questions, error: qError } = await supabase
+        .from("assessment_questions")
+        .select(`
+          *,
+          question_testcases(*)
+        `)
+        .eq("template_id", data.templateId)
+        .order("order_index", { ascending: true });
+
+      if (qError) {
+        throw new Error("Failed to load extracted questions: " + qError.message);
+      }
+
+      setParsedTemplate({
+        id: data.templateId,
+        title: data.title,
+        questionsCount: data.questionsCount,
+        questions: questions || []
+      });
+
+      toast.success("Document parsed and questions extracted successfully!");
+    } catch (err: any) {
+      console.error(err);
+      setParsingStatus("failed");
+      setParsingError(err.message || "An unexpected error occurred.");
+      toast.error(err.message || "Failed to parse document.");
+    }
+  };
+
+  // Open the Manual Testcase Editor Dialog for a specific question
+  const openManualEditor = (qIdx: number) => {
+    if (!parsedTemplate || !parsedTemplate.questions[qIdx]) return;
+    setActiveQuestionIdx(qIdx);
+    const q = parsedTemplate.questions[qIdx];
+    
+    setEditQTitle(q.title);
+    setEditQDesc(q.description);
+    setEditQDiff(q.difficulty);
+    setEditQMarks(q.marks || 10);
+    setEditQTags(Array.isArray(q.tags) ? q.tags.join(", ") : "");
+    setEditQCodeJS(q.starter_code?.javascript || "");
+    setEditQCodePy(q.starter_code?.python || "");
+    setEditQCodeJava(q.starter_code?.java || "");
+    setEditQCodeCpp(q.starter_code?.cpp || "");
+    setEditQTestcases(q.question_testcases || []);
+    setEditQDeletedTcIds([]);
+    setIsEditorOpen(true);
+  };
+
+  // Save current question edits in local state & database
+  const handleSaveQuestion = async () => {
+    if (!parsedTemplate) return;
+    const activeQ = parsedTemplate.questions[activeQuestionIdx];
+    
+    const updatedQ = {
+      ...activeQ,
+      title: editQTitle,
+      description: editQDesc,
+      difficulty: editQDiff,
+      marks: editQMarks,
+      tags: editQTags.split(",").map(t => t.trim()).filter(Boolean),
+      starter_code: {
+        javascript: editQCodeJS,
+        python: editQCodePy,
+        java: editQCodeJava,
+        cpp: editQCodeCpp
+      },
+      question_testcases: editQTestcases,
+      deleted_testcase_ids: editQDeletedTcIds
+    };
+
+    setParsingStatus("parsing");
+    try {
+      const supabase = createClient();
+      
+      const { error: qError } = await supabase
+        .from("assessment_questions")
+        .update({
+          title: updatedQ.title,
+          description: updatedQ.description,
+          difficulty: updatedQ.difficulty,
+          marks: updatedQ.marks,
+          tags: updatedQ.tags,
+          starter_code: updatedQ.starter_code
+        })
+        .eq("id", updatedQ.id);
+
+      if (qError) throw qError;
+
+      for (const tc of updatedQ.question_testcases) {
+        if (tc.id.startsWith("temp-")) {
+          await supabase
+            .from("question_testcases")
+            .insert({
+              question_id: updatedQ.id,
+              input: tc.input,
+              expected_output: tc.expected_output,
+              is_hidden: tc.is_hidden,
+              explanation: tc.explanation || null
+            });
+        } else {
+          await supabase
+            .from("question_testcases")
+            .update({
+              input: tc.input,
+              expected_output: tc.expected_output,
+              is_hidden: tc.is_hidden,
+              explanation: tc.explanation || null
+            })
+            .eq("id", tc.id);
+        }
+      }
+
+      if (updatedQ.deleted_testcase_ids.length > 0) {
+        await supabase
+          .from("question_testcases")
+          .delete()
+          .in("id", updatedQ.deleted_testcase_ids);
+      }
+
+      const { data: refreshedQuestions, error: refreshError } = await supabase
+        .from("assessment_questions")
+        .select(`
+          *,
+          question_testcases(*)
+        `)
+        .eq("template_id", parsedTemplate.id)
+        .order("order_index", { ascending: true });
+
+      if (refreshError) throw refreshError;
+
+      setParsedTemplate((prev: any) => ({
+        ...prev,
+        questions: refreshedQuestions || []
+      }));
+
+      setIsEditorOpen(false);
+      setParsingStatus("success");
+      toast.success("Question modifications successfully saved!");
+    } catch (err: any) {
+      console.error(err);
+      setParsingStatus("success");
+      toast.error("Failed to save changes: " + err.message);
+    }
+  };
+
+  const handleAddTestcase = () => {
+    setEditQTestcases(prev => [
+      ...prev,
+      {
+        id: `temp-${Math.random().toString(36).substring(2, 9)}`,
+        input: "",
+        expected_output: "",
+        is_hidden: false,
+        explanation: ""
+      }
+    ]);
+  };
+
+  const handleDeleteTestcase = (tcId: string) => {
+    setEditQTestcases(prev => prev.filter(tc => tc.id !== tcId));
+    if (!tcId.startsWith("temp-")) {
+      setEditQDeletedTcIds(prev => [...prev, tcId]);
+    }
+  };
 
   // Load email logs when Simulated Inbox opens
   const loadEmails = async () => {
@@ -179,6 +419,11 @@ export function InterviewerScheduleClient({
       return;
     }
 
+    if (assessmentSource === "uploaded" && !assessmentTemplateId) {
+      toast.error("Please upload and parse an assessment paper first.");
+      return;
+    }
+
     // Combine date and time
     const scheduledAt = new Date(`${scheduledDate}T${scheduledTime}`).toISOString();
 
@@ -193,16 +438,16 @@ export function InterviewerScheduleClient({
         durationMinutes,
         notes: notes || undefined,
         candidateEmails,
+        assessmentSource,
+        assessmentTemplateId: assessmentTemplateId || undefined
       });
 
       if (res.error) {
         toast.error(res.error);
       } else if (res.success && res.schedule) {
-        // Refresh schedules from DB to display full joins
         const updatedSchedules = await getScheduledInterviews();
         setScheduledList(updatedSchedules);
 
-        // Also refresh standard rooms which were dynamically generated
         const updatedInterviews = await getInterviews();
         setStandardList(updatedInterviews);
 
@@ -220,6 +465,10 @@ export function InterviewerScheduleClient({
         setTimezone("UTC");
         setDurationMinutes(60);
         setNotes("");
+        setAssessmentSource("ai_generated");
+        setAssessmentTemplateId(null);
+        setParsedTemplate(null);
+        setParsingStatus("idle");
       }
     });
   };
@@ -350,20 +599,128 @@ export function InterviewerScheduleClient({
                         <option value="Behavioral Screen">Behavioral Screen</option>
                       </select>
                     </div>
-                    <div className="grid gap-1.5">
-                      <Label htmlFor="difficulty" className="text-zinc-300 text-xs font-semibold">Difficulty Level</Label>
-                      <select
-                        id="difficulty"
-                        value={difficultyLevel}
-                        onChange={(e) => setDifficultyLevel(e.target.value)}
-                        className="flex h-9 w-full rounded-md border border-stone-800 bg-stone-900/60 px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-violet-500 text-zinc-200"
-                      >
-                        <option value="Easy">Easy (Auto-allocates: Two Sum)</option>
-                        <option value="Medium">Medium (Auto-allocates: Longest Substring)</option>
-                        <option value="Hard">Hard (Auto-allocates: Merge k Sorted Lists)</option>
-                      </select>
+                    {assessmentSource === "ai_generated" && (
+                      <div className="grid gap-1.5 animate-fade-in">
+                        <Label htmlFor="difficulty" className="text-zinc-300 text-xs font-semibold">Difficulty Level</Label>
+                        <select
+                          id="difficulty"
+                          value={difficultyLevel}
+                          onChange={(e) => setDifficultyLevel(e.target.value)}
+                          className="flex h-9 w-full rounded-md border border-stone-800 bg-stone-900/60 px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-violet-500 text-zinc-200"
+                        >
+                          <option value="Easy">Easy (Auto-allocates: Two Sum)</option>
+                          <option value="Medium">Medium (Auto-allocates: Longest Substring)</option>
+                          <option value="Hard">Hard (Auto-allocates: Merge k Sorted Lists)</option>
+                        </select>
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="grid gap-2 border-t border-stone-900 pt-3">
+                    <Label className="text-zinc-300 text-xs font-semibold">Assessment Source</Label>
+                    <div className="flex gap-4">
+                      <label className="flex items-center gap-2 text-sm text-zinc-350 cursor-pointer select-none">
+                        <input
+                          type="radio"
+                          name="assessmentSource"
+                          value="ai_generated"
+                          checked={assessmentSource === "ai_generated"}
+                          onChange={() => setAssessmentSource("ai_generated")}
+                          className="accent-violet-500"
+                        />
+                        AI Generated Questions
+                      </label>
+                      <label className="flex items-center gap-2 text-sm text-zinc-350 cursor-pointer select-none">
+                        <input
+                          type="radio"
+                          name="assessmentSource"
+                          value="uploaded"
+                          checked={assessmentSource === "uploaded"}
+                          onChange={() => setAssessmentSource("uploaded")}
+                          className="accent-violet-500"
+                        />
+                        Upload Question Paper
+                      </label>
                     </div>
                   </div>
+
+                  {assessmentSource === "uploaded" && (
+                    <div className="grid gap-2 border border-stone-900 bg-stone-950/40 p-4 rounded-lg animate-in fade-in slide-in-from-top-2 duration-350">
+                      <Label className="text-zinc-300 text-xs font-semibold">Upload Question Bank Document</Label>
+                      
+                      {parsingStatus === "idle" && (
+                        <div className="border border-dashed border-stone-800 hover:border-violet-500/50 rounded-lg p-6 flex flex-col items-center justify-center cursor-pointer transition relative group bg-stone-900/10">
+                          <UploadCloud className="w-8 h-8 text-zinc-500 group-hover:text-violet-400 transition mb-2" />
+                          <p className="text-xs text-zinc-400 font-medium">Drag & drop or click to select files</p>
+                          <p className="text-[10px] text-zinc-650 mt-1">PDF, DOCX, Markdown (.md), Text (.txt) up to 10MB</p>
+                          <input
+                            type="file"
+                            accept=".pdf,.docx,.md,.txt"
+                            onChange={handleFileUpload}
+                            className="absolute inset-0 opacity-0 cursor-pointer"
+                          />
+                        </div>
+                      )}
+
+                      {(parsingStatus === "uploading" || parsingStatus === "parsing") && (
+                        <div className="border border-stone-900 bg-stone-900/20 rounded-lg p-6 flex flex-col items-center justify-center space-y-3">
+                          <Loader2 className="w-6 h-6 text-violet-500 animate-spin" />
+                          <div className="w-full max-w-[200px] bg-zinc-800 h-1 rounded-full overflow-hidden">
+                            <div className="bg-violet-500 h-full transition-all duration-300" style={{ width: `${uploadProgress}%` }} />
+                          </div>
+                          <span className="text-xs text-zinc-400 font-medium font-mono">
+                            {parsingStatus === "uploading" ? `Uploading file (${uploadProgress}%)...` : "AI Extracting & Structuring Questions..."}
+                          </span>
+                        </div>
+                      )}
+
+                      {parsingStatus === "failed" && (
+                        <div className="border border-red-950/20 bg-red-950/5 rounded-lg p-4 flex flex-col items-center justify-center space-y-2 border-red-900/30">
+                          <AlertCircle className="w-6 h-6 text-red-500" />
+                          <p className="text-xs text-red-400 font-medium">{parsingError || "Failed to parse document"}</p>
+                          <button
+                            type="button"
+                            onClick={() => setParsingStatus("idle")}
+                            className="text-[10px] text-zinc-400 hover:text-white underline mt-1"
+                          >
+                            Try Another Upload
+                          </button>
+                        </div>
+                      )}
+
+                      {parsingStatus === "success" && parsedTemplate && (
+                        <div className="border border-emerald-900/30 bg-emerald-950/5 rounded-lg p-4 flex items-center justify-between border-emerald-800/20 animate-fade-in">
+                          <div className="flex items-center gap-3">
+                            <div className="w-8 h-8 rounded-lg bg-emerald-500/10 flex items-center justify-center border border-emerald-500/20">
+                              <FileText className="w-4 h-4 text-emerald-400" />
+                            </div>
+                            <div>
+                              <p className="text-xs font-bold text-white max-w-[200px] truncate">{parsedTemplate.title}</p>
+                              <p className="text-[10px] text-zinc-400 font-medium mt-0.5">{parsedTemplate.questionsCount} Coding Questions Parsed</p>
+                            </div>
+                          </div>
+
+                          <div className="flex gap-2">
+                            <button
+                              type="button"
+                              onClick={() => setParsingStatus("idle")}
+                              className="px-2.5 py-1 text-[10px] font-semibold text-zinc-450 hover:text-white bg-zinc-900 border border-zinc-800 rounded-md transition"
+                            >
+                              Reset
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => openManualEditor(0)}
+                              className="px-2.5 py-1 text-[10px] font-semibold text-white bg-violet-600 hover:bg-violet-500 rounded-md transition flex items-center gap-1 shadow-md shadow-violet-500/10"
+                            >
+                              <Edit3 className="w-3 h-3" />
+                              Edit Questions
+                            </button>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )}
 
                   {/* Multi-Email tag input component! */}
                   <div className="grid gap-1.5 border-t border-stone-900 pt-3">
@@ -944,6 +1301,256 @@ export function InterviewerScheduleClient({
           </div>
         </SheetContent>
       </Sheet>
+
+      {/* Manual Test Case Editor (Section 10) */}
+      {parsedTemplate && (
+        <Dialog open={isEditorOpen} onOpenChange={setIsEditorOpen}>
+          <DialogContent className="bg-stone-950 border-stone-900 text-zinc-250 sm:max-w-[850px] overflow-y-auto max-h-[90vh] custom-scrollbar">
+            <DialogHeader className="border-b border-stone-900 pb-4 mb-4">
+              <DialogTitle className="text-xl font-bold text-white flex items-center gap-2">
+                <Settings className="w-5 h-5 text-violet-400 animate-spin-once" />
+                Manual Assessment Editor
+              </DialogTitle>
+              <DialogDescription className="text-zinc-400 text-xs">
+                Review and customize the extracted questions, test cases, and starter templates. Changes will update the parsed template records dynamically.
+              </DialogDescription>
+            </DialogHeader>
+
+            <div className="grid grid-cols-1 md:grid-cols-4 gap-6 h-[500px] overflow-hidden">
+              <div className="md:col-span-1 border-r border-stone-900 pr-4 flex flex-col gap-2 overflow-y-auto custom-scrollbar h-full">
+                <span className="text-[10px] font-bold tracking-wider text-zinc-500 uppercase select-none mb-1">Questions ({parsedTemplate.questions.length})</span>
+                {parsedTemplate.questions.map((q: any, idx: number) => (
+                  <button
+                    key={q.id}
+                    type="button"
+                    onClick={() => openManualEditor(idx)}
+                    className={cn(
+                      "w-full text-left p-3 rounded-lg text-xs font-semibold border transition-all flex items-start gap-2",
+                      idx === activeQuestionIdx
+                        ? "bg-violet-650/10 border-violet-500 text-violet-400"
+                        : "bg-stone-900/40 border-stone-900 text-zinc-400 hover:bg-stone-900/60 hover:text-white"
+                    )}
+                  >
+                    <span className="bg-zinc-800 text-[10px] w-4 h-4 rounded-full flex items-center justify-center text-zinc-400 shrink-0 mt-0.5 font-bold">{idx + 1}</span>
+                    <span className="truncate">{q.title}</span>
+                  </button>
+                ))}
+              </div>
+
+              <div className="md:col-span-3 overflow-y-auto pr-1 h-full flex flex-col gap-4 custom-scrollbar text-left">
+                <div className="grid grid-cols-3 gap-4">
+                  <div className="col-span-2 grid gap-1.5">
+                    <Label className="text-zinc-400 text-[11px] font-bold">Question Title</Label>
+                    <Input
+                      value={editQTitle}
+                      onChange={(e) => setEditQTitle(e.target.value)}
+                      className="bg-stone-900 border-stone-850 text-zinc-100 text-xs h-8 focus:border-violet-500"
+                    />
+                  </div>
+                  <div className="grid gap-1.5">
+                    <Label className="text-zinc-400 text-[11px] font-bold">Difficulty</Label>
+                    <select
+                      value={editQDiff}
+                      onChange={(e) => setEditQDiff(e.target.value)}
+                      className="flex h-8 w-full rounded-md border border-stone-850 bg-stone-900 px-2 py-1 text-xs text-zinc-200"
+                    >
+                      <option value="Easy">Easy</option>
+                      <option value="Medium">Medium</option>
+                      <option value="Hard">Hard</option>
+                    </select>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="grid gap-1.5">
+                    <Label className="text-zinc-400 text-[11px] font-bold">Allocated Marks</Label>
+                    <Input
+                      type="number"
+                      value={editQMarks}
+                      onChange={(e) => setEditQMarks(Number(e.target.value))}
+                      className="bg-stone-900 border-stone-850 text-zinc-100 text-xs h-8 focus:border-violet-500"
+                    />
+                  </div>
+                  <div className="grid gap-1.5">
+                    <Label className="text-zinc-400 text-[11px] font-bold">Tags (comma separated)</Label>
+                    <Input
+                      value={editQTags}
+                      onChange={(e) => setEditQTags(e.target.value)}
+                      className="bg-stone-900 border-stone-850 text-zinc-100 text-xs h-8 focus:border-violet-500"
+                      placeholder="Array, Hash Map"
+                    />
+                  </div>
+                </div>
+
+                <div className="grid gap-1.5">
+                  <Label className="text-zinc-400 text-[11px] font-bold">Description (Markdown)</Label>
+                  <textarea
+                    value={editQDesc}
+                    onChange={(e) => setEditQDesc(e.target.value)}
+                    className="flex min-h-[100px] w-full rounded-md border border-stone-850 bg-stone-900 px-3 py-2 text-xs text-zinc-200 resize-y font-sans leading-relaxed focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-violet-500"
+                  />
+                </div>
+
+                <div className="grid gap-1.5 border-t border-stone-900 pt-3">
+                  <Label className="text-zinc-400 text-[11px] font-bold">Starter Code Templates</Label>
+                  <Tabs defaultValue="javascript" className="w-full">
+                    <TabsList className="bg-stone-900/60 border border-stone-850/60 p-0.5 rounded-md gap-1 w-full justify-start h-8">
+                      <TabsTrigger value="javascript" className="text-[10px] px-3 py-1 font-bold">JavaScript</TabsTrigger>
+                      <TabsTrigger value="python" className="text-[10px] px-3 py-1 font-bold">Python</TabsTrigger>
+                      <TabsTrigger value="java" className="text-[10px] px-3 py-1 font-bold">Java</TabsTrigger>
+                      <TabsTrigger value="cpp" className="text-[10px] px-3 py-1 font-bold">C++</TabsTrigger>
+                    </TabsList>
+                    <TabsContent value="javascript" className="mt-2">
+                      <textarea
+                        value={editQCodeJS}
+                        onChange={(e) => setEditQCodeJS(e.target.value)}
+                        className="w-full h-24 bg-stone-900 text-green-400 p-2 rounded-lg border border-stone-850 font-mono text-xs leading-5"
+                      />
+                    </TabsContent>
+                    <TabsContent value="python" className="mt-2">
+                      <textarea
+                        value={editQCodePy}
+                        onChange={(e) => setEditQCodePy(e.target.value)}
+                        className="w-full h-24 bg-stone-900 text-green-400 p-2 rounded-lg border border-stone-850 font-mono text-xs leading-5"
+                      />
+                    </TabsContent>
+                    <TabsContent value="java" className="mt-2">
+                      <textarea
+                        value={editQCodeJava}
+                        onChange={(e) => setEditQCodeJava(e.target.value)}
+                        className="w-full h-24 bg-stone-900 text-green-400 p-2 rounded-lg border border-stone-850 font-mono text-xs leading-5"
+                      />
+                    </TabsContent>
+                    <TabsContent value="cpp" className="mt-2">
+                      <textarea
+                        value={editQCodeCpp}
+                        onChange={(e) => setEditQCodeCpp(e.target.value)}
+                        className="w-full h-24 bg-stone-900 text-green-400 p-2 rounded-lg border border-stone-850 font-mono text-xs leading-5"
+                      />
+                    </TabsContent>
+                  </Tabs>
+                </div>
+
+                <div className="grid gap-3 border-t border-stone-900 pt-3">
+                  <div className="flex justify-between items-center">
+                    <Label className="text-zinc-400 text-[11px] font-bold">Test Cases ({editQTestcases.length})</Label>
+                    <button
+                      type="button"
+                      onClick={handleAddTestcase}
+                      className="px-2.5 py-1 bg-violet-600/10 text-violet-400 hover:bg-violet-600/20 text-[10px] font-bold rounded border border-violet-500/20 transition flex items-center gap-1 cursor-pointer"
+                    >
+                      <Plus className="w-3.5 h-3.5" />
+                      Add Test Case
+                    </button>
+                  </div>
+
+                  <div className="space-y-3">
+                    {editQTestcases.map((tc: any, tcIdx: number) => (
+                      <div key={tc.id} className="bg-stone-900/40 border border-stone-900 rounded-lg p-3 space-y-2.5 relative">
+                        <div className="flex justify-between items-center">
+                          <Badge variant="outline" className={cn(
+                            "text-[9px] font-bold uppercase shrink-0 px-2 py-0.5",
+                            tc.is_hidden 
+                              ? "bg-amber-500/5 text-amber-400 border-amber-500/10" 
+                              : "bg-indigo-500/5 text-indigo-400 border-indigo-500/10"
+                          )}>
+                            {tc.is_hidden ? "Hidden Case" : "Visible Case"}
+                          </Badge>
+                          
+                          <div className="flex items-center gap-3">
+                            <label className="flex items-center gap-1 text-[10px] text-zinc-400 cursor-pointer select-none">
+                              <input
+                                type="checkbox"
+                                checked={tc.is_hidden}
+                                onChange={(e) => {
+                                  const updated = [...editQTestcases];
+                                  updated[tcIdx] = { ...updated[tcIdx], is_hidden: e.target.checked };
+                                  setEditQTestcases(updated);
+                                }}
+                                className="accent-violet-500 w-3 h-3"
+                              />
+                              Is Hidden
+                            </label>
+                            <button
+                              type="button"
+                              onClick={() => handleDeleteTestcase(tc.id)}
+                              className="p-1 hover:text-red-400 text-zinc-500 transition cursor-pointer"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        </div>
+
+                        <div className="grid grid-cols-2 gap-3">
+                          <div className="grid gap-1">
+                            <span className="text-[10px] text-zinc-500 font-bold font-mono">Input</span>
+                            <textarea
+                              value={tc.input}
+                              onChange={(e) => {
+                                const updated = [...editQTestcases];
+                                updated[tcIdx] = { ...updated[tcIdx], input: e.target.value };
+                                setEditQTestcases(updated);
+                              }}
+                              className="w-full bg-stone-950 text-zinc-300 border border-stone-850 p-2 rounded text-[11px] font-mono h-14 focus:outline-none focus:border-violet-500"
+                              placeholder="e.g. nums = [2,7], target = 9"
+                            />
+                          </div>
+                          <div className="grid gap-1">
+                            <span className="text-[10px] text-zinc-500 font-bold font-mono">Expected Output</span>
+                            <textarea
+                              value={tc.expected_output}
+                              onChange={(e) => {
+                                const updated = [...editQTestcases];
+                                updated[tcIdx] = { ...updated[tcIdx], expected_output: e.target.value };
+                                setEditQTestcases(updated);
+                              }}
+                              className="w-full bg-stone-950 text-zinc-300 border border-stone-850 p-2 rounded text-[11px] font-mono h-14 focus:outline-none focus:border-violet-500"
+                              placeholder="e.g. [0,1]"
+                            />
+                          </div>
+                        </div>
+                        
+                        {!tc.is_hidden && (
+                          <div className="grid gap-1 animate-fade-in">
+                            <span className="text-[10px] text-zinc-500 font-bold">Explanation (Optional)</span>
+                            <Input
+                              value={tc.explanation || ""}
+                              onChange={(e) => {
+                                const updated = [...editQTestcases];
+                                updated[tcIdx] = { ...updated[tcIdx], explanation: e.target.value };
+                                setEditQTestcases(updated);
+                              }}
+                              className="bg-stone-950 border-stone-850 text-zinc-300 text-[11px] h-7 focus:border-violet-500"
+                              placeholder="Describe the logic..."
+                            />
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <DialogFooter className="border-t border-stone-900 pt-4 mt-4">
+              <Button
+                type="button"
+                onClick={() => setIsEditorOpen(false)}
+                className="bg-zinc-800 hover:bg-zinc-700 text-white font-semibold text-xs py-1 cursor-pointer"
+              >
+                Close Editor
+              </Button>
+              <Button
+                type="button"
+                onClick={handleSaveQuestion}
+                className="bg-violet-650 hover:bg-violet-500 text-white font-semibold text-xs py-1 cursor-pointer"
+              >
+                Save Question Customizations
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+      )}
     </div>
   );
 }

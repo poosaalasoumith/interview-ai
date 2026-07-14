@@ -5,7 +5,8 @@ import { InterviewerChart } from "@/components/dashboard/interviewer-chart";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
-import Link from "next/link";
+import { SafeLink } from "@/components/ui/safe-link";
+import { Routes } from "@/lib/routes";
 import { redirect } from "next/navigation";
 import { syncAllStaleInterviews } from "@/app/actions/interviews";
 
@@ -14,7 +15,7 @@ export default async function InterviewerDashboard() {
   const { data: { user } } = await supabase.auth.getUser();
 
   if (!user) {
-    redirect("/login");
+    redirect(Routes.login);
   }
 
   // Synchronize dynamic lifecycle states in the DB prior to rendering
@@ -80,21 +81,21 @@ export default async function InterviewerDashboard() {
           <p className="text-muted-foreground mt-1">Manage your upcoming live coding sessions and review candidate evaluations.</p>
         </div>
         {nextSession ? (
-          <Link 
-            href={`/interview/${nextSession.id}`}
+          <SafeLink 
+            href={Routes.interview(nextSession.id)}
             className={cn(buttonVariants({ variant: "default" }), "w-fit bg-primary hover:bg-primary/90 text-primary-foreground shadow-lg shadow-primary/20 cursor-pointer font-semibold")}
           >
             <PlayCircle className="w-4 h-4 mr-2" />
             Join Active Session
-          </Link>
+          </SafeLink>
         ) : (
-          <Link 
-            href="/dashboard/interviewer/interviews"
+          <SafeLink 
+            href={Routes.interviewerInterviews}
             className={cn(buttonVariants({ variant: "default" }), "w-fit bg-primary hover:bg-primary/90 text-primary-foreground shadow-lg shadow-primary/20 cursor-pointer font-semibold")}
           >
             <CalendarCheck className="w-4 h-4 mr-2" />
             Schedule a Round
-          </Link>
+          </SafeLink>
         )}
       </div>
 
@@ -185,12 +186,12 @@ export default async function InterviewerDashboard() {
                       <p className="text-xs text-muted-foreground truncate">{review.title}</p>
                     </div>
                   </div>
-                  <Link 
-                    href={`/interview/${review.id}`}
+                  <SafeLink 
+                    href={Routes.interviewerReview(review.id)}
                     className={cn(buttonVariants({ variant: "ghost", size: "icon" }), "group-hover:text-primary shrink-0 cursor-pointer")}
                   >
                     <ArrowRight className="h-4 w-4" />
-                  </Link>
+                  </SafeLink>
                 </div>
               ))
             )}
@@ -207,14 +208,14 @@ export default async function InterviewerDashboard() {
                       with <span className="text-zinc-200 font-medium">{nextSession.candidate?.name || "Guest Candidate"}</span> • {new Date(nextSession.scheduled_at).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" })}
                     </p>
                   </div>
-                  <Link 
-                    href={`/interview/${nextSession.id}`} 
+                  <SafeLink 
+                    href={Routes.interview(nextSession.id)} 
                     className="inline-flex shrink-0 ml-2"
                   >
                     <Button size="sm" className="h-7 text-xs bg-primary text-primary-foreground font-semibold cursor-pointer">
                       Join
                     </Button>
-                  </Link>
+                  </SafeLink>
                 </div>
               </div>
             )}
