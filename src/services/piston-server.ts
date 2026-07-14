@@ -1,5 +1,6 @@
 import { writeFileSync, mkdirSync, rmSync, readFileSync } from "fs";
 import { join } from "path";
+import { tmpdir } from "os";
 import { spawnSync, execSync } from "child_process";
 import { SUPPORTED_LANGUAGES } from "@/constants/languages";
 import { PistonResponse, ExecutionResult } from "./piston";
@@ -233,10 +234,10 @@ export async function executeCodeLocal(
     };
   }
 
-  // Create unique temporary directory in the workspace
+  // Create unique temporary directory in the workspace or system tmp directory if on Vercel
+  const baseTempDir = process.env.VERCEL ? tmpdir() : join(process.cwd(), "temp_run");
   const tempDir = join(
-    process.cwd(),
-    "temp_run",
+    baseTempDir,
     `run_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`
   );
   mkdirSync(tempDir, { recursive: true });
